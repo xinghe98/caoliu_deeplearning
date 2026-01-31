@@ -40,6 +40,32 @@ def load_dataset(config):
     # 合并所有数据
     combined_df = pd.concat(all_data, ignore_index=True)
     
+    # 去重处理：根据download_link去重，保留label为1的记录
+    if 'download_link' in combined_df.columns:
+        # 先移除download_link为空的重复检查
+        has_link = combined_df['download_link'].notna() & (combined_df['download_link'] != '')
+        df_with_link = combined_df[has_link].copy()
+        df_without_link = combined_df[~has_link].copy()
+        
+        if len(df_with_link) > 0:
+            # 统计去重前的数量
+            before_count = len(df_with_link)
+            
+            # 按download_link分组，优先保留label=1的记录
+            # 方法：先按label降序排序（1在前），然后对每个download_link保留第一条
+            df_with_link = df_with_link.sort_values('label', ascending=False)
+            df_with_link = df_with_link.drop_duplicates(subset=['download_link'], keep='first')
+            
+            # 统计去重后的数量
+            after_count = len(df_with_link)
+            duplicates_removed = before_count - after_count
+            
+            if duplicates_removed > 0:
+                print(f"⚠ 发现 {duplicates_removed} 条重复的下载链接，已去重（保留label=1的记录）")
+        
+        # 合并有链接和无链接的数据
+        combined_df = pd.concat([df_with_link, df_without_link], ignore_index=True)
+    
     # 数据清洗：移除标签为空的行
     combined_df = combined_df.dropna(subset=['label'])
     # 确保标签是整数类型
