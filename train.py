@@ -20,16 +20,18 @@ warnings.filterwarnings('ignore')
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 from transformers import BertTokenizer
+import numpy as np
 
 # 导入自定义模块
 from config import Config, get_device
 from dataset import load_dataset, VideoDataset
 from models import MultiModalClassifier
 from utils import train_one_epoch, validate, set_seed, plot_training_history
+from utils import FocalLoss, CombinedLoss, get_class_weights
 
 
 def parse_args():
@@ -107,10 +109,28 @@ def main():
     train_dataset = VideoDataset(train_df, config, tokenizer, is_training=True)
     val_dataset = VideoDataset(val_df, config, tokenizer, is_training=False)
     
+    # 创建加权采样器（处理类别不平衡）
+    if config.USE_WEIGHTED_SAMPLER:
+        train_labels = train_df['label'].values
+        sample_weights = get_class_weights(train_labels, device)
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True
+        )
+        print(f"✓ 使用加权采样器平衡类别")
+        print(f"  正样本权重: {sample_weights[train_labels == 1].mean():.4f}")
+        print(f"  负样本权重: {sample_weights[train_labels == 0].mean():.4f}")
+        shuffle_train = False  # 使用sampler时不能shuffle
+    else:
+        sampler = None
+        shuffle_train = True
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.BATCH_SIZE,
-        shuffle=True,
+        shuffle=shuffle_train,
+        sampler=sampler,
         num_workers=0,  # Mac上建议设为0避免多进程问题
         pin_memory=True if device.type == 'cuda' else False
     )
@@ -135,14 +155,28 @@ def main():
     print(f"模型总参数量: {total_params:,}")
     print(f"可训练参数量: {trainable_params:,}")
     
-    # 定义损失函数（带权重的二元交叉熵，处理类别不平衡）
-    pos_weight = torch.tensor(
-        [(df['label'] == 0).sum() / (df['label'] == 1).sum()],
-        dtype=torch.float32,  # MPS不支持float64，必须使用float32
-        device=device
-    )
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    print(f"正样本权重: {pos_weight.item():.2f}")
+    # 定义损失函数
+    if config.USE_FOCAL_LOSS:
+        # 使用Focal Loss + Label Smoothing（更好地处理类别不平衡）
+        criterion = CombinedLoss(
+            alpha=config.FOCAL_ALPHA,
+            gamma=config.FOCAL_GAMMA,
+            smoothing=config.LABEL_SMOOTHING,
+            focal_weight=0.7,
+            bce_weight=0.3
+        )
+        print(f"✓ 使用 Combined Loss (Focal + Label Smoothing)")
+        print(f"  Focal alpha: {config.FOCAL_ALPHA}, gamma: {config.FOCAL_GAMMA}")
+        print(f"  Label smoothing: {config.LABEL_SMOOTHING}")
+    else:
+        # 使用带权重的二元交叉熵
+        pos_weight = torch.tensor(
+            [(df['label'] == 0).sum() / (df['label'] == 1).sum()],
+            dtype=torch.float32,
+            device=device
+        )
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        print(f"✓ 使用 BCEWithLogitsLoss, 正样本权重: {pos_weight.item():.2f}")
     
     # 定义优化器
     optimizer = optim.AdamW(

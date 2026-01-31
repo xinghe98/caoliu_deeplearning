@@ -6,6 +6,7 @@
 集中管理所有超参数和配置项
 """
 
+import os
 import torch
 
 
@@ -14,8 +15,9 @@ class Config:
     训练配置类，集中管理所有超参数
     """
     # 数据相关
-    DATA_DIR = "/Users/xinghe/Downloads/深度学习"  # 数据集根目录
-    DATASET_FOLDERS = ["数据集1", "数据集2"]        # 数据集文件夹名
+    # 动态获取脚本所在目录作为数据根目录，兼容本地和服务器环境
+    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATASET_FOLDERS = ["数据集1", "数据集2", "数据集3"]  # 数据集文件夹名
     MAX_IMAGES_PER_VIDEO = 5                       # 每个视频最多使用的缩略图数量
     
     # 模型相关
@@ -23,14 +25,21 @@ class Config:
     IMAGE_FEATURE_DIM = 2048                       # ResNet50输出的特征维度
     TEXT_FEATURE_DIM = 768                         # BERT输出的特征维度
     HIDDEN_DIM = 512                               # 融合层隐藏层维度
-    DROPOUT_RATE = 0.3                             # Dropout比率，防止过拟合
+    DROPOUT_RATE = 0.5                             # Dropout比率（提高到0.5防止过拟合）
     
     # 训练相关
     BATCH_SIZE = 16                                # 批次大小
-    LEARNING_RATE = 1e-4                           # 学习率
-    NUM_EPOCHS = 20                                # 训练轮数
-    WEIGHT_DECAY = 1e-5                            # L2正则化系数
-    EARLY_STOPPING_PATIENCE = 5                    # 早停的耐心轮数
+    LEARNING_RATE = 5e-5                           # 学习率（降低以稳定训练）
+    NUM_EPOCHS = 30                                # 训练轮数（增加以让模型充分学习）
+    WEIGHT_DECAY = 1e-4                            # L2正则化系数（提高防止过拟合）
+    EARLY_STOPPING_PATIENCE = 7                    # 早停的耐心轮数
+    
+    # 类别不平衡处理相关
+    USE_FOCAL_LOSS = True                          # 是否使用Focal Loss
+    FOCAL_ALPHA = 0.75                             # Focal Loss正样本权重(正样本少时>0.5)
+    FOCAL_GAMMA = 2.0                              # Focal Loss聚焦参数
+    LABEL_SMOOTHING = 0.1                          # 标签平滑系数
+    USE_WEIGHTED_SAMPLER = True                    # 是否使用加权采样器
     
     # BERT相关
     BERT_MODEL_NAME = 'bert-base-chinese'          # 使用中文BERT
