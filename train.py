@@ -4,13 +4,16 @@
 ========================================
 
 使用方法：
-    python train.py
+    python train.py              # 从头开始训练
+    python train.py --resume     # 继续上次的训练
+    python train.py --resume --epochs 30  # 继续训练并设置总epoch数为30
 
 作者: AI Assistant
 日期: 2026-01-31
 """
 
 import os
+import argparse
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -29,10 +32,29 @@ from models import MultiModalClassifier
 from utils import train_one_epoch, validate, set_seed, plot_training_history
 
 
+def parse_args():
+    """
+    解析命令行参数
+    """
+    parser = argparse.ArgumentParser(description='视频吸引力预测模型训练')
+    parser.add_argument('--resume', action='store_true', 
+                        help='继续上次的训练')
+    parser.add_argument('--epochs', type=int, default=None,
+                        help='训练的总epoch数（覆盖配置文件）')
+    parser.add_argument('--lr', type=float, default=None,
+                        help='学习率（覆盖配置文件）')
+    parser.add_argument('--batch-size', type=int, default=None,
+                        help='批次大小（覆盖配置文件）')
+    return parser.parse_args()
+
+
 def main():
     """
     主函数：完整的训练流程
     """
+    # 解析命令行参数
+    args = parse_args()
+    
     print("="*60)
     print("       视频吸引力预测模型 - 多模态深度学习训练")
     print("="*60)
@@ -42,6 +64,20 @@ def main():
     
     # 初始化配置
     config = Config()
+    
+    # 应用命令行参数覆盖配置
+    if args.epochs is not None:
+        config.NUM_EPOCHS = args.epochs
+    if args.lr is not None:
+        config.LEARNING_RATE = args.lr
+    if args.batch_size is not None:
+        config.BATCH_SIZE = args.batch_size
+    
+    # 显示训练模式
+    if args.resume:
+        print("\n📂 模式: 继续训练 (Resume Training)")
+    else:
+        print("\n🆕 模式: 从头开始训练 (Training from Scratch)")
     
     # 设置随机种子
     set_seed(config.RANDOM_SEED)
@@ -134,8 +170,29 @@ def main():
     
     best_val_loss = float('inf')
     patience_counter = 0
+    start_epoch = 0
     
-    for epoch in range(config.NUM_EPOCHS):
+    # 如果选择继续训练，加载checkpoint
+    checkpoint_path = os.path.join(config.DATA_DIR, config.MODEL_SAVE_PATH)
+    if args.resume:
+        if os.path.exists(checkpoint_path):
+            print("\n正在加载checkpoint...")
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_val_loss = checkpoint['val_loss']
+            print(f"✓ 成功加载checkpoint!")
+            print(f"  - 从 epoch {start_epoch + 1} 继续训练")
+            print(f"  - 之前最佳验证损失: {best_val_loss:.4f}")
+            print(f"  - 之前最佳验证准确率: {checkpoint['val_acc']*100:.2f}%")
+        else:
+            print(f"\n⚠️ 未找到checkpoint文件: {checkpoint_path}")
+            print("   将从头开始训练...")
+    
+    print(f"\n计划训练 epochs: {start_epoch + 1} -> {config.NUM_EPOCHS}")
+    
+    for epoch in range(start_epoch, config.NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{config.NUM_EPOCHS}")
         print("-" * 40)
         
