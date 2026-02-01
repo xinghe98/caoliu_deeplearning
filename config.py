@@ -29,7 +29,7 @@ class Config:
     
     # 训练相关
     BATCH_SIZE = 16                                # 批次大小
-    LEARNING_RATE = 5e-5                           # 学习率（降低以稳定训练）
+    LEARNING_RATE = 1e-5                           # 学习率（降低以稳定训练）
     NUM_EPOCHS = 30                                # 训练轮数（增加以让模型充分学习）
     WEIGHT_DECAY = 1e-4                            # L2正则化系数（提高防止过拟合）
     EARLY_STOPPING_PATIENCE = 7                    # 早停的耐心轮数
