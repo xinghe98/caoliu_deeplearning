@@ -83,7 +83,9 @@ def load_dataset(config):
             # 检查文件夹中是否有图片
             images = glob.glob(os.path.join(folder_path, "*.jpg")) + \
                      glob.glob(os.path.join(folder_path, "*.gif")) + \
-                     glob.glob(os.path.join(folder_path, "*.png"))
+                     glob.glob(os.path.join(folder_path, "*.png")) + \
+                     glob.glob(os.path.join(folder_path, "*.jpeg")) + \
+                     glob.glob(os.path.join(folder_path, "*.webp"))
             if len(images) > 0:
                 valid_indices.append(idx)
     

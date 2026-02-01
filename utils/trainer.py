@@ -89,6 +89,8 @@ def validate(model, dataloader, criterion, device):
     """
     model.eval()
     total_loss = 0
+    all_predictions = []
+    all_labels = []
     all_probs = []
     all_video_ids = []
     all_titles = []
