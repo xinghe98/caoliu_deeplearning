@@ -41,6 +41,10 @@ class Config:
     LABEL_SMOOTHING = 0.1                          # 标签平滑系数
     USE_WEIGHTED_SAMPLER = True                    # 是否使用加权采样器
     
+    # 对抗性数据增强（防止模型依赖图片数量判断）
+    USE_ADVERSARIAL_AUGMENT = True                 # 是否启用对抗性数据增强
+    SINGLE_IMAGE_DROP_PROB = 0.3                   # 随机裁剪为单图的概率
+    
     # BERT相关
     BERT_MODEL_NAME = 'bert-base-chinese'          # 使用中文BERT
     MAX_TEXT_LENGTH = 128                          # 文本最大长度

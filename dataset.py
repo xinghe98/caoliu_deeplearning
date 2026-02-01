@@ -8,6 +8,7 @@
 
 import os
 import glob
+import random
 import pandas as pd
 import torch
 from PIL import Image
@@ -185,6 +186,20 @@ class VideoDataset(Dataset):
             glob.glob(os.path.join(folder_path, "*.png"))
         )
         
+        # 对抗性数据增强：训练时随机将多图样本裁剪为单图
+        # 这样可以防止模型依赖"图片数量"这个虚假特征
+        use_single_image = False
+        if (self.is_training and 
+            hasattr(self.config, 'USE_ADVERSARIAL_AUGMENT') and 
+            self.config.USE_ADVERSARIAL_AUGMENT and
+            len(image_paths) > 1):
+            # 以配置的概率随机裁剪为单图
+            drop_prob = getattr(self.config, 'SINGLE_IMAGE_DROP_PROB', 0.3)
+            if random.random() < drop_prob:
+                use_single_image = True
+                # 随机选择一张图片
+                image_paths = [random.choice(image_paths)]
+        
         images = []
         for img_path in image_paths[:self.config.MAX_IMAGES_PER_VIDEO]:
             try:
@@ -216,6 +231,7 @@ class VideoDataset(Dataset):
         images_tensor = torch.stack(images)
         
         return images_tensor, num_images
+    
     
     def _encode_text(self, title):
         """
