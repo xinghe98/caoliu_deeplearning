@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+venv
+.venv
+env
+
+# 数据集 (不打包进镜像)
+数据集1/
+数据集2/
+数据集3/
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# 其他
+*.log
+*.csv
+train.py
+dataset.py
+utils/
