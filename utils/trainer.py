@@ -94,6 +94,7 @@ def validate(model, dataloader, criterion, device):
     all_probs = []
     all_video_ids = []
     all_titles = []
+    all_dataset_folders = []
     
     with torch.no_grad():
         for batch in dataloader:
@@ -107,6 +108,7 @@ def validate(model, dataloader, criterion, device):
             # 获取元数据
             video_ids = batch['video_id']
             titles = batch['title']
+            dataset_folders = batch.get('dataset_folder', [''] * len(video_ids))
             
             # 前向传播
             logits = model(images, num_images, input_ids, attention_mask)
@@ -124,8 +126,10 @@ def validate(model, dataloader, criterion, device):
             all_probs.extend(probs.cpu().numpy().flatten())
             all_video_ids.extend(video_ids)
             all_titles.extend(titles)
+            all_dataset_folders.extend(dataset_folders)
     
     avg_loss = total_loss / len(dataloader)
     accuracy = accuracy_score(all_labels, all_predictions)
     
-    return avg_loss, accuracy, np.array(all_predictions), np.array(all_labels), np.array(all_probs), all_video_ids, all_titles
+    return avg_loss, accuracy, np.array(all_predictions), np.array(all_labels), np.array(all_probs), all_video_ids, all_titles, all_dataset_folders
+

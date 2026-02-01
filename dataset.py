@@ -277,5 +277,6 @@ class VideoDataset(Dataset):
             'attention_mask': attention_mask,        # [MAX_TEXT_LENGTH]
             'label': torch.tensor(label, dtype=torch.float32),
             'video_id': row['video_id'],
-            'title': str(row['title'])
+            'title': str(row['title']),
+            'dataset_folder': row['dataset_folder']
         }

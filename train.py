@@ -237,7 +237,7 @@ def main():
         )
         
         # 验证
-        val_loss, val_acc, predictions, labels, probs, video_ids, titles = validate(
+        val_loss, val_acc, predictions, labels, probs, video_ids, titles, dataset_folders = validate(
             model, val_loader, criterion, device
         )
         
@@ -250,6 +250,7 @@ def main():
                 error_data = []
                 for idx in error_indices:
                     error_data.append({
+                        'dataset_folder': dataset_folders[idx],
                         'video_id': video_ids[idx],
                         'title': titles[idx],
                         'true_label': int(labels[idx]),
@@ -310,7 +311,7 @@ def main():
     checkpoint = torch.load(os.path.join(config.DATA_DIR, config.MODEL_SAVE_PATH))
     model.load_state_dict(checkpoint['model_state_dict'])
     
-    _, final_acc, final_predictions, final_labels, _, _, _ = validate(
+    _, final_acc, final_predictions, final_labels, _, _, _, _ = validate(
         model, val_loader, criterion, device
     )
     
