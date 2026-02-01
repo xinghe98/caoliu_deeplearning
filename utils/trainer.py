@@ -89,8 +89,9 @@ def validate(model, dataloader, criterion, device):
     """
     model.eval()
     total_loss = 0
-    all_predictions = []
-    all_labels = []
+    all_probs = []
+    all_video_ids = []
+    all_titles = []
     
     with torch.no_grad():
         for batch in dataloader:
@@ -101,6 +102,10 @@ def validate(model, dataloader, criterion, device):
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['label'].to(device).unsqueeze(1)
             
+            # 获取元数据
+            video_ids = batch['video_id']
+            titles = batch['title']
+            
             # 前向传播
             logits = model(images, num_images, input_ids, attention_mask)
             
@@ -109,12 +114,16 @@ def validate(model, dataloader, criterion, device):
             total_loss += loss.item()
             
             # 获取预测结果
-            predictions = (torch.sigmoid(logits) > 0.5).float()
+            probs = torch.sigmoid(logits)
+            predictions = (probs > 0.5).float()
             
             all_predictions.extend(predictions.cpu().numpy().flatten())
             all_labels.extend(labels.cpu().numpy().flatten())
+            all_probs.extend(probs.cpu().numpy().flatten())
+            all_video_ids.extend(video_ids)
+            all_titles.extend(titles)
     
     avg_loss = total_loss / len(dataloader)
     accuracy = accuracy_score(all_labels, all_predictions)
     
-    return avg_loss, accuracy, np.array(all_predictions), np.array(all_labels)
+    return avg_loss, accuracy, np.array(all_predictions), np.array(all_labels), np.array(all_probs), all_video_ids, all_titles

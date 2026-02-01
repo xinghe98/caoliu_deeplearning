@@ -25,6 +25,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 from transformers import BertTokenizer
 import numpy as np
+import pandas as pd
 
 # 导入自定义模块
 from config import Config, get_device
@@ -236,9 +237,31 @@ def main():
         )
         
         # 验证
-        val_loss, val_acc, predictions, labels = validate(
+        val_loss, val_acc, predictions, labels, probs, video_ids, titles = validate(
             model, val_loader, criterion, device
         )
+        
+        # 当准确率达到70%时，保存错误样本
+        if val_acc >= 0.70:
+            # 找出错误样本
+            error_indices = np.where(predictions != labels)[0]
+            
+            if len(error_indices) > 0:
+                error_data = []
+                for idx in error_indices:
+                    error_data.append({
+                        'video_id': video_ids[idx],
+                        'title': titles[idx],
+                        'true_label': int(labels[idx]),
+                        'pred_label': int(predictions[idx]),
+                        'pred_prob': float(probs[idx]),
+                        'epoch': epoch + 1
+                    })
+                
+                error_df = pd.DataFrame(error_data)
+                save_path = os.path.join(config.DATA_DIR, f"error_cases_epoch_{epoch+1}.csv")
+                error_df.to_csv(save_path, index=False, encoding='utf-8-sig')
+                print(f"  ★ 准确率达标 ({val_acc*100:.2f}%)，已保存 {len(error_df)} 个错误样本到 error_cases_epoch_{epoch+1}.csv")
         
         # 记录历史
         train_losses.append(train_loss)
@@ -287,7 +310,7 @@ def main():
     checkpoint = torch.load(os.path.join(config.DATA_DIR, config.MODEL_SAVE_PATH))
     model.load_state_dict(checkpoint['model_state_dict'])
     
-    _, final_acc, final_predictions, final_labels = validate(
+    _, final_acc, final_predictions, final_labels, _, _, _ = validate(
         model, val_loader, criterion, device
     )
     

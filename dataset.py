@@ -263,5 +263,7 @@ class VideoDataset(Dataset):
             'num_images': num_images,                # 实际图片数量
             'input_ids': input_ids,                  # [MAX_TEXT_LENGTH]
             'attention_mask': attention_mask,        # [MAX_TEXT_LENGTH]
-            'label': torch.tensor(label, dtype=torch.float32)
+            'label': torch.tensor(label, dtype=torch.float32),
+            'video_id': row['video_id'],
+            'title': str(row['title'])
         }
