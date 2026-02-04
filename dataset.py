@@ -183,7 +183,9 @@ class VideoDataset(Dataset):
         image_paths = sorted(
             glob.glob(os.path.join(folder_path, "*.jpg")) +
             glob.glob(os.path.join(folder_path, "*.gif")) +
-            glob.glob(os.path.join(folder_path, "*.png"))
+            glob.glob(os.path.join(folder_path, "*.png")) +
+            glob.glob(os.path.join(folder_path, "*.jpeg")) +
+            glob.glob(os.path.join(folder_path, "*.webp"))
         )
         
         # 对抗性数据增强：训练时随机将多图样本裁剪为单图

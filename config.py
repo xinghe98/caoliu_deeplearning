@@ -17,7 +17,7 @@ class Config:
     # 数据相关
     # 动态获取脚本所在目录作为数据根目录，兼容本地和服务器环境
     DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-    DATASET_FOLDERS = ["数据集1", "数据集2", "数据集3"]  # 数据集文件夹名
+    DATASET_FOLDERS = ["数据集1", "数据集2", "数据集3", "数据集4", "数据集5"]  # 数据集文件夹名
     MAX_IMAGES_PER_VIDEO = 5                       # 每个视频最多使用的缩略图数量
     
     # 模型相关
@@ -36,14 +36,14 @@ class Config:
     
     # 类别不平衡处理相关
     USE_FOCAL_LOSS = True                          # 是否使用Focal Loss
-    FOCAL_ALPHA = 0.75                             # Focal Loss正样本权重(正样本少时>0.5)
-    FOCAL_GAMMA = 2.0                              # Focal Loss聚焦参数
+    FOCAL_ALPHA = 0.85                             # Focal Loss正样本权重(正样本少时>0.5)
+    FOCAL_GAMMA = 3.0                              # Focal Loss聚焦参数
     LABEL_SMOOTHING = 0.1                          # 标签平滑系数
     USE_WEIGHTED_SAMPLER = True                    # 是否使用加权采样器
     
     # 对抗性数据增强（防止模型依赖图片数量判断）
-    USE_ADVERSARIAL_AUGMENT = True                 # 是否启用对抗性数据增强
-    SINGLE_IMAGE_DROP_PROB = 0.3                   # 随机裁剪为单图的概率
+    USE_ADVERSARIAL_AUGMENT = False                 # 是否启用对抗性数据增强
+    SINGLE_IMAGE_DROP_PROB = 0.5                   # 随机裁剪为单图的概率
     
     # BERT相关
     BERT_MODEL_NAME = 'bert-base-chinese'          # 使用中文BERT
