@@ -29,9 +29,9 @@ class MultiModalClassifier(nn.Module):
         # 文本编码器
         self.text_encoder = TextEncoder(config)
         
-        # 可学习的模态权重 [image_weight, text_weight]
-        # 初始化为相等权重，训练过程中会自动调整
-        self.modal_weights = nn.Parameter(torch.ones(2))
+        # 固定的模态权重：图像 90%，文本 10%
+        self.image_weight = 0.9
+        self.text_weight = 0.1
         
         # 融合层
         # 输入维度 = 图像特征维度 + 文本特征维度 = 2 * HIDDEN_DIM
@@ -66,12 +66,9 @@ class MultiModalClassifier(nn.Module):
         # 提取文本特征
         text_features = self.text_encoder(input_ids, attention_mask)
         
-        # 计算归一化的模态权重（softmax确保和为1）
-        weights = torch.softmax(self.modal_weights, dim=0)
-        
-        # 对特征进行加权
-        image_features = image_features * weights[0]
-        text_features = text_features * weights[1]
+        # 对特征进行固定权重加权
+        image_features = image_features * self.image_weight
+        text_features = text_features * self.text_weight
         
         # 特征融合（拼接）
         # [batch_size, HIDDEN_DIM * 2]
