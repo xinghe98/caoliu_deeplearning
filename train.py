@@ -288,6 +288,10 @@ def main():
                 'val_acc': val_acc,
             }, os.path.join(config.DATA_DIR, config.MODEL_SAVE_PATH))
             print(f"  ✓ 保存最佳模型 (Val Loss: {val_loss:.4f})")
+            
+            # 打印模态权重分配
+            modal_weights = torch.softmax(model.modal_weights, dim=0)
+            print(f"  📊 模态权重: 图像 {modal_weights[0].item()*100:.1f}% | 文本 {modal_weights[1].item()*100:.1f}%")
         else:
             patience_counter += 1
             print(f"  ! 验证损失未改善 ({patience_counter}/{config.EARLY_STOPPING_PATIENCE})")
