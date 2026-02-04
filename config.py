@@ -25,11 +25,11 @@ class Config:
     IMAGE_FEATURE_DIM = 2048                       # ResNet50输出的特征维度
     TEXT_FEATURE_DIM = 768                         # BERT输出的特征维度
     HIDDEN_DIM = 512                               # 融合层隐藏层维度
-    DROPOUT_RATE = 0.3                             # Dropout比率（从0.5降到0.3，避免欠拟合）
+    DROPOUT_RATE = 0.5                             # Dropout比率（从0.5降到0.3，避免欠拟合）
     
     # 训练相关
     BATCH_SIZE = 32                                # 批次大小（增大以稳定梯度）
-    LEARNING_RATE = 1e-5                           # 学习率（降低以稳定训练）
+    LEARNING_RATE = 5e-5                           # 学习率（从1e-5提高到5e-5加快收敛）
     NUM_EPOCHS = 30                                # 训练轮数（增加以让模型充分学习）
     WEIGHT_DECAY = 1e-4                            # L2正则化系数（提高防止过拟合）
     EARLY_STOPPING_PATIENCE = 7                    # 早停的耐心轮数
