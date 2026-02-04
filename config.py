@@ -25,10 +25,10 @@ class Config:
     IMAGE_FEATURE_DIM = 2048                       # ResNet50输出的特征维度
     TEXT_FEATURE_DIM = 768                         # BERT输出的特征维度
     HIDDEN_DIM = 512                               # 融合层隐藏层维度
-    DROPOUT_RATE = 0.5                             # Dropout比率（提高到0.5防止过拟合）
+    DROPOUT_RATE = 0.3                             # Dropout比率（从0.5降到0.3，避免欠拟合）
     
     # 训练相关
-    BATCH_SIZE = 16                                # 批次大小
+    BATCH_SIZE = 32                                # 批次大小（增大以稳定梯度）
     LEARNING_RATE = 1e-5                           # 学习率（降低以稳定训练）
     NUM_EPOCHS = 30                                # 训练轮数（增加以让模型充分学习）
     WEIGHT_DECAY = 1e-4                            # L2正则化系数（提高防止过拟合）
@@ -36,9 +36,9 @@ class Config:
     
     # 类别不平衡处理相关
     USE_FOCAL_LOSS = True                          # 是否使用Focal Loss
-    FOCAL_ALPHA = 0.85                             # Focal Loss正样本权重(正样本少时>0.5)
-    FOCAL_GAMMA = 3.0                              # Focal Loss聚焦参数
-    LABEL_SMOOTHING = 0.1                          # 标签平滑系数
+    FOCAL_ALPHA = 0.75                             # Focal Loss正样本权重（从0.85降到0.75）
+    FOCAL_GAMMA = 2.0                              # Focal Loss聚焦参数（从3.0降到2.0）
+    LABEL_SMOOTHING = 0.05                         # 标签平滑系数（从0.1降到0.05）
     USE_WEIGHTED_SAMPLER = True                    # 是否使用加权采样器
     
     # 对抗性数据增强（防止模型依赖图片数量判断）
