@@ -34,12 +34,12 @@ class Config:
     WEIGHT_DECAY = 1e-4                            # L2正则化系数（提高防止过拟合）
     EARLY_STOPPING_PATIENCE = 7                    # 早停的耐心轮数
     
-    # 类别不平衡处理相关
-    USE_FOCAL_LOSS = True                          # 是否使用Focal Loss
-    FOCAL_ALPHA = 0.75                             # Focal Loss正样本权重（从0.85降到0.75）
-    FOCAL_GAMMA = 2.0                              # Focal Loss聚焦参数（从3.0降到2.0）
-    LABEL_SMOOTHING = 0.05                         # 标签平滑系数（从0.1降到0.05）
-    USE_WEIGHTED_SAMPLER = True                    # 是否使用加权采样器
+    # 类别不平衡处理相关（正样本仅卒20%）
+    USE_FOCAL_LOSS = True                          # 使用Focal Loss塇重关注正样本
+    FOCAL_ALPHA = 0.9                              # 正样本权重（大幅提高，因为正样本少）
+    FOCAL_GAMMA = 2.0                              # Focal Loss聚焦参数
+    LABEL_SMOOTHING = 0.05                         # 标签平滑系数
+    USE_WEIGHTED_SAMPLER = False                   # 关闭加权采样（避免与Focal Loss双重平衡）
     
     # 对抗性数据增强（防止模型依赖图片数量判断）
     USE_ADVERSARIAL_AUGMENT = False                 # 是否启用对抗性数据增强
