@@ -17,6 +17,8 @@ import torch
 from torchvision import transforms
 from transformers import BertTokenizer
 from tqdm import tqdm
+import tempfile
+import requests
 
 from config import Config, get_device
 from models import MultiModalClassifier
@@ -119,6 +121,42 @@ class Predictor:
             'label': '好看' if is_good else '不好看',
             'confidence': prob if is_good else (1 - prob)
         }
+    
+    def predict_from_url(self, image_urls, title=""):
+        """通过图片URL预测
+        
+        参数:
+            image_urls: 单个URL字符串或URL列表
+            title: 视频标题
+        """
+        if isinstance(image_urls, str):
+            image_urls = [image_urls]
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, url in enumerate(image_urls):
+                try:
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    
+                    content_type = response.headers.get("content-type", "")
+                    if "jpeg" in content_type or "jpg" in content_type:
+                        ext = ".jpg"
+                    elif "png" in content_type:
+                        ext = ".png"
+                    elif "gif" in content_type:
+                        ext = ".gif"
+                    elif "webp" in content_type:
+                        ext = ".webp"
+                    else:
+                        ext = os.path.splitext(url.split("?")[0])[1] or ".jpg"
+                    
+                    image_path = os.path.join(tmpdir, f"image_{i}{ext}")
+                    with open(image_path, "wb") as f:
+                        f.write(response.content)
+                except Exception as e:
+                    print(f"下载图片失败 {url}: {e}")
+            
+            return self.predict(tmpdir, title)
     
     def predict_batch(self, video_list, show_progress=True):
         """批量预测"""
@@ -265,6 +303,7 @@ def main():
         epilog="""
 示例:
   python predict.py --video_folder "./数据集1/video_01" --title "标题"
+  python predict.py --image_url "https://example.com/image.jpg" --title "标题"
   python predict.py --dataset_dir "./数据集1"
   python predict.py --csv_file "./data/index.csv" --data_root "./data"
   python predict.py --predict_all
@@ -272,6 +311,7 @@ def main():
     )
     
     parser.add_argument('--video_folder', type=str, help='视频文件夹路径')
+    parser.add_argument('--image_url', type=str, help='图片URL地址')
     parser.add_argument('--title', type=str, default="", help='视频标题')
     parser.add_argument('--dataset_dir', type=str, help='数据集目录')
     parser.add_argument('--csv_file', type=str, help='CSV文件路径')
@@ -292,6 +332,19 @@ def main():
         
     elif args.csv_file:
         predictor.predict_from_csv(args.csv_file, data_root=args.data_root, output_path=args.output)
+    
+    elif args.image_url:
+        result = predictor.predict_from_url(args.image_url, args.title)
+        
+        print("\n" + "="*50)
+        print("预测结果")
+        print("="*50)
+        print(f"图片URL: {args.image_url}")
+        print(f"标题: {args.title}")
+        print(f"结果: {result['label']}")
+        print(f"好看概率: {result['probability_good']:.2%}")
+        print(f"置信度: {result['confidence']:.2%}")
+        print("="*50)
         
     elif args.video_folder:
         result = predictor.predict(args.video_folder, args.title)

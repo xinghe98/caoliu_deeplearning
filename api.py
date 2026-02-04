@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import shutil
 import tempfile
+import httpx
 
 from predict import Predictor
 
@@ -100,6 +101,61 @@ async def predict_upload(
         try:
             result = get_predictor().predict(tmpdir, title)
             return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+class UrlPredictRequest(BaseModel):
+    image_urls: list[str]  # 支持多张图片URL
+    title: str = ""
+
+
+@app.post("/predict/url", response_model=PredictResponse)
+async def predict_url(request: UrlPredictRequest):
+    """通过图片URL预测
+    
+    参数:
+        image_urls: 图片URL地址列表
+        title: 视频标题
+    
+    返回:
+        prediction: 预测结果 (0=不好看, 1=好看)
+        label: 结果标签 ("好看" 或 "不好看")
+        probability: 好看概率
+        probability_good: 好看概率
+        probability_bad: 不好看概率
+        confidence: 置信度
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                for i, url in enumerate(request.image_urls):
+                    try:
+                        response = await client.get(url)
+                        response.raise_for_status()
+                        
+                        content_type = response.headers.get("content-type", "")
+                        if "jpeg" in content_type or "jpg" in content_type:
+                            ext = ".jpg"
+                        elif "png" in content_type:
+                            ext = ".png"
+                        elif "gif" in content_type:
+                            ext = ".gif"
+                        elif "webp" in content_type:
+                            ext = ".webp"
+                        else:
+                            ext = os.path.splitext(url.split("?")[0])[1] or ".jpg"
+                        
+                        image_path = os.path.join(tmpdir, f"image_{i}{ext}")
+                        with open(image_path, "wb") as f:
+                            f.write(response.content)
+                    except Exception as e:
+                        print(f"下载图片失败 {url}: {e}")
+            
+            result = get_predictor().predict(tmpdir, request.title)
+            return result
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=400, detail=f"下载图片失败: {str(e)}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
