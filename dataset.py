@@ -67,15 +67,6 @@ def load_dataset(config):
         # 合并有链接和无链接的数据
         combined_df = pd.concat([df_with_link, df_without_link], ignore_index=True)
     
-    # 去重处理：根据标题去重，防止模型记住"标题-标签"关联
-    if 'title' in combined_df.columns:
-        before_count = len(combined_df)
-        # 按 label 降序排序（优先保留 label=1），然后去重
-        combined_df = combined_df.sort_values('label', ascending=False)
-        combined_df = combined_df.drop_duplicates(subset=['title'], keep='first')
-        duplicates_removed = before_count - len(combined_df)
-        if duplicates_removed > 0:
-            print(f"⚠ 发现 {duplicates_removed} 条重复标题，已去重（保留label=1的记录）")
     
     # 数据清洗：移除标签为空的行
     combined_df = combined_df.dropna(subset=['label'])
