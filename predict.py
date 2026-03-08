@@ -209,6 +209,34 @@ class Predictor:
         result_df.to_csv(output_path, index=False, encoding='utf-8-sig')
         print(f"✓ 结果保存至: {output_path}")
         
+        # 提取预测为好看的结果并单独保存
+        good_df = result_df[result_df['predict_result'] == 1].copy()
+        if len(good_df) > 0:
+            import shutil
+            
+            base_dir = os.path.dirname(output_path) or '.'
+            basename = os.path.basename(output_path)
+            good_dir_name = basename.replace('.csv', '_good') if basename.endswith('.csv') else f"{basename}_good"
+            good_dir = os.path.join(base_dir, good_dir_name)
+            
+            os.makedirs(good_dir, exist_ok=True)
+            
+            # 保存只包含好看结果的csv
+            good_csv_path = os.path.join(good_dir, basename)
+            good_df.to_csv(good_csv_path, index=False, encoding='utf-8-sig')
+            print(f"✓ 提取了 {len(good_df)} 个预测为'好看'的结果，保存至: {good_dir}")
+            
+            # 复制对应的图片文件夹
+            for _, row in tqdm(good_df.iterrows(), total=len(good_df), desc="复制好看的图片文件夹"):
+                src_folder = os.path.join(data_root, str(row[video_id_col]))
+                dst_folder = os.path.join(good_dir, str(row[video_id_col]))
+                
+                try:
+                    if os.path.exists(src_folder) and not os.path.exists(dst_folder):
+                        shutil.copytree(src_folder, dst_folder)
+                except Exception as e:
+                    print(f"  - 复制文件夹 {src_folder} 失败: {e}")
+        
         self._print_stats(result_df)
         return result_df
     
