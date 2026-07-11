@@ -87,6 +87,28 @@ def evaluate(model, loader, criterion, device, target_precision):
     return metrics, samples
 
 
+def write_prediction_artifacts(samples, output_dir, prefix, threshold):
+    """Write all predictions plus a focused false-positive/false-negative set."""
+    samples = samples.copy()
+    samples['decision_threshold'] = float(threshold)
+    samples.to_csv(
+        os.path.join(output_dir, f'{prefix}_predictions.csv'),
+        index=False,
+        encoding='utf-8-sig',
+    )
+    errors = samples[samples['prediction'] != samples['true_label']].copy()
+    errors['error_type'] = np.where(
+        errors['prediction'].eq(1), 'false_positive', 'false_negative'
+    )
+    errors = errors.sort_values('probability', ascending=False)
+    errors.to_csv(
+        os.path.join(output_dir, f'{prefix}_error_cases.csv'),
+        index=False,
+        encoding='utf-8-sig',
+    )
+    return int(len(errors))
+
+
 def main():
     args = parse_args()
     config = Config()
@@ -176,7 +198,9 @@ def main():
                 'history': history,
             }
             torch.save(checkpoint, checkpoint_path)
-            samples.to_csv(os.path.join(config.DATA_DIR, 'validation_predictions.csv'), index=False, encoding='utf-8-sig')
+            write_prediction_artifacts(
+                samples, config.DATA_DIR, 'validation', metrics['threshold']
+            )
             print('✓ 已按验证 PR-AUC 保存最佳模型')
         else:
             patience += 1
@@ -191,14 +215,23 @@ def main():
         _, _, _, labels, _, video_ids, titles, folders, logits = validate(model, external_loader, criterion, device)
         probabilities = apply_temperature(logits, checkpoint['temperature'])
         report['external_test'] = binary_metrics(labels, probabilities, checkpoint['decision_threshold'])
-        pd.DataFrame({
+        external_samples = pd.DataFrame({
             'dataset_folder': folders, 'video_id': video_ids, 'title': titles,
             'true_label': labels.astype(int), 'logit': logits, 'probability': probabilities,
             'prediction': (probabilities >= checkpoint['decision_threshold']).astype(int),
-        }).to_csv(os.path.join(config.DATA_DIR, 'external_test_predictions.csv'), index=False, encoding='utf-8-sig')
+        })
+        report['external_test_error_count'] = write_prediction_artifacts(
+            external_samples, config.DATA_DIR, 'external_test', checkpoint['decision_threshold']
+        )
         print(f"外部测试 PR-AUC={report['external_test']['pr_auc']:.4f}, precision={report['external_test']['precision']:.2%}")
+    validation_samples = pd.read_csv(os.path.join(config.DATA_DIR, 'validation_predictions.csv'), encoding='utf-8-sig')
+    report['validation_error_count'] = int(
+        (validation_samples['prediction'] != validation_samples['true_label']).sum()
+    )
     with open(os.path.join(config.DATA_DIR, 'evaluation_report.json'), 'w', encoding='utf-8') as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2, allow_nan=False)
+    with open(os.path.join(config.DATA_DIR, 'training_history.json'), 'w', encoding='utf-8') as handle:
+        json.dump(history, handle, ensure_ascii=False, indent=2)
     plot_training_history(history['train_loss'], history['validation_loss'], history['train_accuracy'], history['validation_pr_auc'], os.path.join(config.DATA_DIR, 'training_history.png'))
 
 
