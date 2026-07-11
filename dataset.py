@@ -9,11 +9,55 @@
 import os
 import glob
 import random
+import re
 import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
+from sklearn.model_selection import StratifiedGroupKFold
+
+
+def _normalise_title(value):
+    """Create a conservative duplicate key without changing the model text."""
+    if pd.isna(value):
+        return ""
+    return re.sub(r'\s+', '', str(value).strip().lower())
+
+
+def _add_group_ids(dataframe):
+    """Group exact duplicate links/titles so leakage cannot cross a split."""
+    df = dataframe.copy()
+    links = df.get('download_link', pd.Series('', index=df.index)).fillna('').astype(str).str.strip()
+    titles = df.get('title', pd.Series('', index=df.index)).map(_normalise_title)
+    df['_group_id'] = [f'link:{link}' if link else f'title:{title}' for link, title in zip(links, titles)]
+    # Rows without either identifier remain isolated rather than being grouped together.
+    empty = df['_group_id'].isin(['link:', 'title:'])
+    df.loc[empty, '_group_id'] = [f'row:{index}' for index in df.index[empty]]
+    return df
+
+
+def split_train_validation(dataframe, validation_fraction=0.2, random_state=42):
+    """Deterministic stratified group split that keeps duplicate content together."""
+    if '_group_id' not in dataframe:
+        raise ValueError('Dataframe must contain _group_id')
+    group_labels = dataframe.drop_duplicates('_group_id').groupby('label').size()
+    group_count = dataframe['_group_id'].nunique()
+    n_splits = min(5, group_count, int(group_labels.min()))
+    if n_splits < 2:
+        raise ValueError('至少需要两个不同内容组才能切分训练集和验证集')
+    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    target = validation_fraction
+    best = None
+    for train_indices, val_indices in splitter.split(dataframe, dataframe['label'], dataframe['_group_id']):
+        ratio_distance = abs(len(val_indices) / len(dataframe) - target)
+        class_distance = abs(dataframe.iloc[val_indices]['label'].mean() - dataframe['label'].mean())
+        score = ratio_distance + class_distance
+        if best is None or score < best[0]:
+            best = (score, train_indices, val_indices)
+    _, train_indices, val_indices = best
+    return (dataframe.iloc[train_indices].reset_index(drop=True),
+            dataframe.iloc[val_indices].reset_index(drop=True))
 
 
 def load_dataset(config):
@@ -41,33 +85,6 @@ def load_dataset(config):
     # 合并所有数据
     combined_df = pd.concat(all_data, ignore_index=True)
     
-    # 去重处理：根据download_link去重，保留label为1的记录
-    if 'download_link' in combined_df.columns:
-        # 先移除download_link为空的重复检查
-        has_link = combined_df['download_link'].notna() & (combined_df['download_link'] != '')
-        df_with_link = combined_df[has_link].copy()
-        df_without_link = combined_df[~has_link].copy()
-        
-        if len(df_with_link) > 0:
-            # 统计去重前的数量
-            before_count = len(df_with_link)
-            
-            # 按download_link分组，优先保留label=1的记录
-            # 方法：先按label降序排序（1在前），然后对每个download_link保留第一条
-            df_with_link = df_with_link.sort_values('label', ascending=False)
-            df_with_link = df_with_link.drop_duplicates(subset=['download_link'], keep='first')
-            
-            # 统计去重后的数量
-            after_count = len(df_with_link)
-            duplicates_removed = before_count - after_count
-            
-            if duplicates_removed > 0:
-                print(f"⚠ 发现 {duplicates_removed} 条重复的下载链接，已去重（保留label=1的记录）")
-        
-        # 合并有链接和无链接的数据
-        combined_df = pd.concat([df_with_link, df_without_link], ignore_index=True)
-    
-    
     # 数据清洗：移除标签为空的行
     combined_df = combined_df.dropna(subset=['label'])
     # 确保标签是整数类型
@@ -92,6 +109,21 @@ def load_dataset(config):
                 valid_indices.append(idx)
     
     combined_df = combined_df.loc[valid_indices].reset_index(drop=True)
+    combined_df = _add_group_ids(combined_df)
+
+    # 同一内容组出现相反标签时无法得到可靠监督信号；明确排除而非偏向正类。
+    group_label_counts = combined_df.groupby('_group_id')['label'].nunique()
+    conflicting_groups = group_label_counts[group_label_counts > 1].index
+    if len(conflicting_groups):
+        conflicting_rows = combined_df[combined_df['_group_id'].isin(conflicting_groups)]
+        print(f"⚠ 排除 {len(conflicting_rows)} 条标签冲突记录（{len(conflicting_groups)} 个内容组），请人工复核")
+        combined_df = combined_df[~combined_df['_group_id'].isin(conflicting_groups)]
+
+    # 保留每个内容组的一条记录，避免重复样本在训练中被放大。
+    before_dedup = len(combined_df)
+    combined_df = combined_df.drop_duplicates(subset=['_group_id'], keep='first').reset_index(drop=True)
+    if before_dedup != len(combined_df):
+        print(f"✓ 移除 {before_dedup - len(combined_df)} 条重复内容记录")
     
     print(f"\n{'='*50}")
     print(f"数据集统计信息:")

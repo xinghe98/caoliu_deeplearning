@@ -9,9 +9,11 @@
 from .trainer import train_one_epoch, validate
 from .helpers import set_seed, plot_training_history
 from .losses import FocalLoss, LabelSmoothingBCELoss, CombinedLoss, get_class_weights
+from .evaluation import apply_temperature, binary_metrics, fit_temperature, select_threshold
 
 __all__ = [
     'train_one_epoch', 'validate', 'set_seed', 'plot_training_history',
-    'FocalLoss', 'LabelSmoothingBCELoss', 'CombinedLoss', 'get_class_weights'
+    'FocalLoss', 'LabelSmoothingBCELoss', 'CombinedLoss', 'get_class_weights',
+    'apply_temperature', 'binary_metrics', 'fit_temperature', 'select_threshold'
 ]
 

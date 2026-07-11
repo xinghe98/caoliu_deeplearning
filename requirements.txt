@@ -21,7 +21,9 @@ torch>=2.0.0
 torchvision>=0.15.0
 
 # Transformers (用于BERT模型)
-transformers>=4.30.0
+# Version 5 currently requires a different hub API than this project uses.
+transformers>=4.30.0,<5.0.0
+huggingface_hub>=0.16.0,<1.0.0
 
 # 数据处理
 pandas>=1.5.0

@@ -37,14 +37,28 @@ class Predictor:
                 'best_model.pth'
             )
         
-        self.model = MultiModalClassifier(self.config).to(self.device)
-        
         checkpoint = torch.load(model_path, map_location=self.device)
+        # New checkpoints carry their structural configuration.  Old checkpoints
+        # keep the original fixed-weight fusion path so existing deployments do
+        # not silently change their predictions.
+        saved_config = checkpoint.get('model_config')
+        if saved_config:
+            for name, value in saved_config.items():
+                if name not in {'DATA_DIR', 'DATASET_FOLDERS', 'MODEL_SAVE_PATH'}:
+                    setattr(self.config, name, value)
+        else:
+            self.config.NORMALIZE_MODALITIES = False
+            self.config.DROPOUT_RATE = 0.5
+
+        self.model = MultiModalClassifier(self.config).to(self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.eval()
+        self.temperature = float(checkpoint.get('temperature', 1.0))
+        self.decision_threshold = float(checkpoint.get('decision_threshold', 0.5))
+        self.model_version = int(checkpoint.get('format_version', 1))
         
         val_acc = checkpoint.get('val_acc', 0)
-        print(f"✓ 模型加载成功，验证准确率: {val_acc*100:.2f}%")
+        print(f"✓ 模型加载成功，验证准确率: {val_acc*100:.2f}%，业务阈值: {self.decision_threshold:.3f}")
         
         self.tokenizer = BertTokenizer.from_pretrained(self.config.BERT_MODEL_NAME)
         
@@ -110,16 +124,18 @@ class Predictor:
         
         with torch.no_grad():
             logits = self.model(images, [num_images], input_ids, attention_mask)
-            prob = torch.sigmoid(logits).item()
+            prob = torch.sigmoid(logits / self.temperature).item()
         
-        is_good = prob > 0.5
+        is_good = prob >= self.decision_threshold
         return {
             'probability': prob,
             'probability_good': prob,
             'probability_bad': 1 - prob,
             'prediction': 1 if is_good else 0,
             'label': '好看' if is_good else '不好看',
-            'confidence': prob if is_good else (1 - prob)
+            'confidence': prob if is_good else (1 - prob),
+            'decision_threshold': self.decision_threshold,
+            'model_version': self.model_version,
         }
     
     def predict_from_url(self, image_urls, title=""):

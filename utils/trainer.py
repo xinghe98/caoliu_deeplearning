@@ -92,6 +92,7 @@ def validate(model, dataloader, criterion, device):
     all_predictions = []
     all_labels = []
     all_probs = []
+    all_logits = []
     all_video_ids = []
     all_titles = []
     all_dataset_folders = []
@@ -124,6 +125,7 @@ def validate(model, dataloader, criterion, device):
             all_predictions.extend(predictions.cpu().numpy().flatten())
             all_labels.extend(labels.cpu().numpy().flatten())
             all_probs.extend(probs.cpu().numpy().flatten())
+            all_logits.extend(logits.cpu().numpy().flatten())
             all_video_ids.extend(video_ids)
             all_titles.extend(titles)
             all_dataset_folders.extend(dataset_folders)
@@ -131,5 +133,7 @@ def validate(model, dataloader, criterion, device):
     avg_loss = total_loss / len(dataloader)
     accuracy = accuracy_score(all_labels, all_predictions)
     
-    return avg_loss, accuracy, np.array(all_predictions), np.array(all_labels), np.array(all_probs), all_video_ids, all_titles, all_dataset_folders
+    return (avg_loss, accuracy, np.array(all_predictions), np.array(all_labels),
+            np.array(all_probs), all_video_ids, all_titles, all_dataset_folders,
+            np.array(all_logits))
 

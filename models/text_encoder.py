@@ -37,6 +37,12 @@ class TextEncoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(config.DROPOUT_RATE)
         )
+
+    def set_last_layers_trainable(self, enabled):
+        """在 warmup 和微调阶段之间切换 BERT 最后两层。"""
+        for index in (10, 11):
+            for param in self.bert.encoder.layer[index].parameters():
+                param.requires_grad = enabled
     
     def forward(self, input_ids, attention_mask):
         """

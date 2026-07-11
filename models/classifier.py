@@ -29,9 +29,14 @@ class MultiModalClassifier(nn.Module):
         # 文本编码器
         self.text_encoder = TextEncoder(config)
         
-        # 固定的模态权重：图像 90%，文本 10%
-        self.image_weight = 0.9
-        self.text_weight = 0.1
+        self.normalize_modalities = getattr(config, 'NORMALIZE_MODALITIES', True)
+        if self.normalize_modalities:
+            self.image_norm = nn.LayerNorm(config.HIDDEN_DIM)
+            self.text_norm = nn.LayerNorm(config.HIDDEN_DIM)
+        else:
+            # 旧 checkpoint 的兼容路径。
+            self.image_weight = 0.9
+            self.text_weight = 0.1
         
         # 融合层
         # 输入维度 = 图像特征维度 + 文本特征维度 = 2 * HIDDEN_DIM
@@ -66,9 +71,12 @@ class MultiModalClassifier(nn.Module):
         # 提取文本特征
         text_features = self.text_encoder(input_ids, attention_mask)
         
-        # 对特征进行固定权重加权
-        image_features = image_features * self.image_weight
-        text_features = text_features * self.text_weight
+        if self.normalize_modalities:
+            image_features = self.image_norm(image_features)
+            text_features = self.text_norm(text_features)
+        else:
+            image_features = image_features * self.image_weight
+            text_features = text_features * self.text_weight
         
         # 特征融合（拼接）
         # [batch_size, HIDDEN_DIM * 2]

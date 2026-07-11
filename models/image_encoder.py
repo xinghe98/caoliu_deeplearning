@@ -25,16 +25,13 @@ class ImageEncoder(nn.Module):
         # 加载预训练的ResNet50
         resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         
-        # 移除最后的全连接层，只保留特征提取部分
-        # ResNet50的输出维度是2048
+        # 先在原始 ResNet 上冻结/解冻，再转为 Sequential。此前在
+        # Sequential 上按 "layer4" 名称匹配会失败，导致整个主干被冻结。
+        for param in resnet.parameters():
+            param.requires_grad = False
+        for param in resnet.layer4.parameters():
+            param.requires_grad = True
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])
-        
-        # 冻结ResNet的前几层，只微调后面几层（可选）
-        # 这样可以减少过拟合风险，同时利用预训练的通用特征
-        for name, param in self.backbone.named_parameters():
-            # 只训练layer4
-            if 'layer4' not in name:
-                param.requires_grad = False
         
         # 注意力机制：学习每张图片的重要性权重
         # 用于融合多张缩略图的特征
@@ -50,6 +47,11 @@ class ImageEncoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(config.DROPOUT_RATE)
         )
+
+    def set_layer4_trainable(self, enabled):
+        """在 warmup 和微调阶段之间切换 ResNet layer4。"""
+        for param in self.backbone[7].parameters():  # ResNet child index 7 is layer4
+            param.requires_grad = enabled
     
     def forward(self, images, num_images):
         """

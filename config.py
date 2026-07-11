@@ -25,21 +25,24 @@ class Config:
     IMAGE_FEATURE_DIM = 2048                       # ResNet50输出的特征维度
     TEXT_FEATURE_DIM = 768                         # BERT输出的特征维度
     HIDDEN_DIM = 512                               # 融合层隐藏层维度
-    DROPOUT_RATE = 0.5                             # Dropout比率（从0.5降到0.3，避免欠拟合）
+    DROPOUT_RATE = 0.3                             # 降低分类头欠拟合风险
+    NORMALIZE_MODALITIES = True                    # 图文特征分别归一化后再融合
     
     # 训练相关
     BATCH_SIZE = 32                                # 批次大小（增大以稳定梯度）
-    LEARNING_RATE = 5e-5                           # 学习率（从1e-5提高到5e-5加快收敛）
-    NUM_EPOCHS = 30                                # 训练轮数（增加以让模型充分学习）
+    LEARNING_RATE = 5e-5                           # 分类头学习率
+    BACKBONE_LEARNING_RATE = 1e-5                  # ResNet layer4 / BERT后两层学习率
+    WARMUP_EPOCHS = 3                              # 仅训练分类头的轮数
+    NUM_EPOCHS = 23                                # warmup 后最多再训练20轮
     WEIGHT_DECAY = 1e-4                            # L2正则化系数（提高防止过拟合）
-    EARLY_STOPPING_PATIENCE = 7                    # 早停的耐心轮数
+    EARLY_STOPPING_PATIENCE = 5                    # 以 PR-AUC 早停
     
-    # 类别不平衡处理相关（正样本仅卒20%）
-    USE_FOCAL_LOSS = True                          # 使用Focal Loss塇重关注正样本
-    FOCAL_ALPHA = 0.9                              # 正样本权重（大幅提高，因为正样本少）
-    FOCAL_GAMMA = 2.0                              # Focal Loss聚焦参数
-    LABEL_SMOOTHING = 0.05                         # 标签平滑系数
-    USE_WEIGHTED_SAMPLER = False                   # 关闭加权采样（避免与Focal Loss双重平衡）
+    # 使用标准 BCE 保持概率可校准；类别取舍由验证集阈值决定
+    USE_FOCAL_LOSS = False
+    USE_WEIGHTED_SAMPLER = False
+    TARGET_PRECISION = 0.90                        # 默认“好看”筛选的最低精确率
+    VALIDATION_FRACTION = 0.2
+    EXTERNAL_TEST_FOLDERS = ["数据集3"]            # 训练期间完全隔离的外部测试集
     
     # 对抗性数据增强（防止模型依赖图片数量判断）
     USE_ADVERSARIAL_AUGMENT = False                 # 是否启用对抗性数据增强

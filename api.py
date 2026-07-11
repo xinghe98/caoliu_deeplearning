@@ -47,6 +47,8 @@ class PredictResponse(BaseModel):
     prediction: int
     label: str
     confidence: float
+    decision_threshold: float
+    model_version: int
 
 
 class BatchPredictRequest(BaseModel):
