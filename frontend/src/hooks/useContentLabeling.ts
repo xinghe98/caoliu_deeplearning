@@ -13,6 +13,15 @@ type UseContentLabelingOptions = {
   onUndo?: () => void
 }
 
+// crypto.randomUUID() is unavailable in some browsers on an HTTP LAN origin.
+// The key only needs to be unique per mutation so the API can safely dedupe a retry.
+function createIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `label-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 export function useContentLabeling({
   current,
   setImageIndex,
@@ -26,7 +35,7 @@ export function useContentLabeling({
 
   const labelMutation = useMutation({
     mutationFn: async ({ item, label }: { item: ContentRead; label: 0 | 1 }) => {
-      const updated = await contentApi.label(item.id, label, crypto.randomUUID())
+      const updated = await contentApi.label(item.id, label, createIdempotencyKey())
       const history = await labelsApi.history(item.id)
       return { updated, eventId: history[0]?.id ?? null, label }
     },
