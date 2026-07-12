@@ -15,6 +15,13 @@ training_history.png
 logs/
 runs/
 checkpoints/
+platform_data/
+deploy_data/
+.env
+.pytest_tmp/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
 
 # ==================== Python ====================
 __pycache__/

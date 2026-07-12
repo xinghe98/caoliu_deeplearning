@@ -1,28 +1,53 @@
-FROM python:3.10-slim
+# syntax=docker/dockerfile:1
+# Multi-stage image: React frontend + preference platform (API / worker)
+
+# ---------- frontend ----------
+FROM node:20-bookworm-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# ---------- runtime ----------
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HOME=/data/platform_data/hf_cache \
+    TRANSFORMERS_CACHE=/data/platform_data/hf_cache \
+    PLATFORM_DATA_DIR=/data/platform_data
 
 WORKDIR /app
 
-# 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
+    libgomp1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
 COPY requirements.txt .
+# Default: CPU PyTorch wheels (document GPU override separately)
+RUN pip install --upgrade pip \
+    && pip install -r requirements.txt
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制项目文件
-COPY config.py .
-COPY predict.py .
-COPY api.py .
+# Application code (training CLI optional but useful in container)
+COPY config.py predict.py dataset.py pack_candidate.py train.py ./
 COPY models/ ./models/
+COPY utils/ ./utils/
+COPY platform_app/ ./platform_app/
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 
-# 模型文件 (构建时复制，或运行时挂载)
-COPY best_model.pth .
+# Built SPA (FastAPI serves frontend/dist)
+COPY --from=frontend-build /frontend/dist ./frontend/dist
 
-EXPOSE 8000
+RUN mkdir -p /data/platform_data /data/models /data/media
 
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8080
+
+# Default command is API; compose overrides for worker
+CMD ["python", "-m", "uvicorn", "platform_app.main:app", "--host", "0.0.0.0", "--port", "8080"]

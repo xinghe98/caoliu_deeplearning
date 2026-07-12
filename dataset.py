@@ -10,6 +10,13 @@ import os
 import glob
 import random
 import re
+import shutil
+import stat
+import tempfile
+import zipfile
+import weakref
+from contextlib import AbstractContextManager
+from pathlib import Path
 import pandas as pd
 import torch
 from PIL import Image
@@ -137,6 +144,172 @@ def load_dataset(config):
     return combined_df
 
 
+TRAINING_PACKAGE_MAX_FILES = 200
+TRAINING_PACKAGE_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+_ALLOWED_PACKAGE_SPLITS = frozenset({'train', 'validation', 'production_shadow_test', 'external_test'})
+
+
+class TrainingPackage(AbstractContextManager):
+    """A loaded training package whose temporary extraction is explicitly owned."""
+
+    def __init__(self, dataframe, root: str, temp_dir: str | None):
+        self.dataframe = dataframe
+        self.root = root
+        self._temp_dir = temp_dir
+        self._finalizer = weakref.finalize(self, shutil.rmtree, temp_dir, ignore_errors=True) if temp_dir else None
+
+    def close(self) -> None:
+        if self._temp_dir:
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = None
+        if self._finalizer:
+            self._finalizer.detach()
+
+    def __getitem__(self, key):
+        return self.dataframe[key]
+
+    def __getattr__(self, name):
+        return getattr(self.dataframe, name)
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+
+def _safe_extract_training_package(archive: zipfile.ZipFile, target: Path) -> None:
+    members = archive.infolist()
+    if len(members) > TRAINING_PACKAGE_MAX_FILES:
+        raise ValueError('训练包文件数量超过限制')
+    if len({member.filename for member in members}) != len(members):
+        raise ValueError('训练包包含重复文件名')
+    total = 0
+    for member in members:
+        name = member.filename
+        destination = (target / name).resolve()
+        if not name or Path(name).is_absolute() or not destination.is_relative_to(target.resolve()):
+            raise ValueError('训练包包含非法路径')
+        if stat.S_ISLNK(member.external_attr >> 16):
+            raise ValueError('训练包不能包含符号链接')
+        total += member.file_size
+        if total > TRAINING_PACKAGE_MAX_UNCOMPRESSED_BYTES:
+            raise ValueError('训练包解压后体积超过限制')
+    archive.extractall(target)
+
+
+def _validate_split_manifest(df, split_df):
+    required = {'content_id', 'label', 'image_paths'}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"训练包 manifest.csv 缺少列: {', '.join(sorted(missing))}")
+    if df['content_id'].isna().any() or df['content_id'].astype(str).str.strip().eq('').any() or df['content_id'].duplicated().any():
+        raise ValueError('训练包 content_id 必须非空且唯一')
+    if split_df is not None:
+        if not {'content_id', 'split'}.issubset(split_df.columns):
+            raise ValueError('split_manifest.csv 必须包含 content_id 与 split 列')
+        if split_df['content_id'].isna().any() or split_df['content_id'].duplicated().any():
+            raise ValueError('split_manifest.csv 的 content_id 必须非空且唯一')
+        split_map = split_df.set_index('content_id')['split']
+        missing_ids = set(df['content_id']) - set(split_map.index)
+        extra_ids = set(split_map.index) - set(df['content_id'])
+        if missing_ids or extra_ids:
+            raise ValueError('split_manifest.csv 必须与 manifest.csv 的 content_id 完全一致')
+        df = df.drop(columns=['split'], errors='ignore').copy()
+        df['split'] = df['content_id'].map(split_map)
+    if 'split' not in df.columns:
+        raise ValueError('训练包缺少 split 列，且没有 split_manifest.csv')
+    if df['split'].isna().any() or not set(df['split'].astype(str)).issubset(_ALLOWED_PACKAGE_SPLITS):
+        raise ValueError('训练包包含缺失或不支持的 split')
+    labels = pd.to_numeric(df['label'], errors='coerce')
+    if labels.isna().any() or not set(labels.astype(int)).issubset({0, 1}) or not (labels == labels.astype(int)).all():
+        raise ValueError('训练包 label 必须为 0 或 1')
+    df = df.copy()
+    df['label'] = labels.astype(int)
+    return df
+
+
+def load_training_package(package_path, split_manifest=None) -> TrainingPackage:
+    """Load a training ZIP/directory; use it as a context manager to clean ZIP extraction."""
+    package_path = os.path.abspath(package_path)
+    temp_dir = None
+    if os.path.isfile(package_path) and package_path.lower().endswith('.zip'):
+        temp_dir = tempfile.mkdtemp(prefix='training_package_')
+        try:
+            with zipfile.ZipFile(package_path) as archive:
+                _safe_extract_training_package(archive, Path(temp_dir))
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+        root = temp_dir
+    else:
+        root = package_path
+
+    manifest_path = os.path.join(root, 'manifest.csv')
+    if not os.path.isfile(manifest_path):
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise FileNotFoundError(f'训练包缺少 manifest.csv: {manifest_path}')
+    try:
+        df = pd.read_csv(manifest_path, encoding='utf-8-sig')
+        split_path = split_manifest or os.path.join(root, 'split_manifest.csv')
+        split_df = pd.read_csv(split_path, encoding='utf-8-sig') if os.path.isfile(split_path) else None
+        df = _validate_split_manifest(df, split_df)
+    except Exception:
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    records = []
+    for _, row in df.iterrows():
+        split = str(row['split'])
+        if split in {'external_test'}:
+            # Allowed for evaluation loaders only.
+            pass
+        image_field = str(row.get('image_paths') or '')
+        rel_paths = [part.strip() for part in image_field.split(';') if part.strip()]
+        abs_paths = []
+        for rel_path in rel_paths:
+            path = (Path(root) / rel_path).resolve()
+            if Path(rel_path).is_absolute() or not path.is_relative_to(Path(root).resolve()):
+                if temp_dir:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                raise ValueError(f'训练包图片路径非法: {rel_path}')
+            if not path.is_file():
+                if temp_dir:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                raise ValueError(f'训练包引用的图片不存在: {rel_path}')
+            abs_paths.append(str(path))
+        if not abs_paths:
+            # Fall back to content image directory.
+            folder = os.path.join(root, 'images', str(row.get('content_id', '')))
+            abs_paths = sorted(
+                glob.glob(os.path.join(folder, '*.jpg'))
+                + glob.glob(os.path.join(folder, '*.jpeg'))
+                + glob.glob(os.path.join(folder, '*.png'))
+                + glob.glob(os.path.join(folder, '*.gif'))
+                + glob.glob(os.path.join(folder, '*.webp'))
+            )
+        if not abs_paths:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise ValueError(f"训练包样本缺少图片: {row['content_id']}")
+        records.append({
+            'dataset_folder': 'package',
+            'video_id': str(row.get('content_id') or row.get('video_id')),
+            'title': row.get('title', ''),
+            'label': int(row['label']),
+            'download_link': row.get('download_link', ''),
+            'split': split,
+            'image_paths': abs_paths,
+            '_group_id': str(row.get('content_group_id') or row.get('content_id') or row.get('video_id')),
+            '_package_root': root,
+            '_package_temp': temp_dir,
+        })
+    if not records:
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise ValueError('训练包没有可用样本')
+    return TrainingPackage(pd.DataFrame(records), root, temp_dir)
+
+
 class VideoDataset(Dataset):
     """
     视频数据集类，用于加载图像缩略图和标题文本
@@ -144,7 +317,7 @@ class VideoDataset(Dataset):
     继承自PyTorch的Dataset类，实现__len__和__getitem__方法
     """
     
-    def __init__(self, dataframe, config, tokenizer, transform=None, is_training=True):
+    def __init__(self, dataframe, config, tokenizer, transform=None, is_training=True, package_mode=False):
         """
         初始化数据集
         
@@ -154,11 +327,13 @@ class VideoDataset(Dataset):
             tokenizer: BERT分词器
             transform: 图像变换操作
             is_training: 是否为训练模式
+            package_mode: 是否从训练包显式路径加载图片
         """
         self.df = dataframe.reset_index(drop=True)
         self.config = config
         self.tokenizer = tokenizer
         self.is_training = is_training
+        self.package_mode = package_mode or ('image_paths' in self.df.columns)
         
         # 定义图像变换
         if transform is None:
@@ -283,6 +458,25 @@ class VideoDataset(Dataset):
         
         return encoding['input_ids'].squeeze(0), encoding['attention_mask'].squeeze(0)
     
+    def _load_images_from_path_list(self, image_paths):
+        images = []
+        paths = list(image_paths) if isinstance(image_paths, (list, tuple)) else []
+        for img_path in paths[: self.config.MAX_IMAGES_PER_VIDEO]:
+            try:
+                img = Image.open(img_path)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                images.append(self.transform(img))
+            except Exception as exc:
+                print(f'警告: 无法加载图片 {img_path}: {exc}')
+                continue
+        if len(images) == 0:
+            images.append(torch.zeros(3, self.config.IMAGE_SIZE, self.config.IMAGE_SIZE))
+        num_images = len(images)
+        while len(images) < self.config.MAX_IMAGES_PER_VIDEO:
+            images.append(torch.zeros(3, self.config.IMAGE_SIZE, self.config.IMAGE_SIZE))
+        return torch.stack(images), num_images
+
     def __getitem__(self, idx):
         """
         获取单个样本
@@ -294,16 +488,16 @@ class VideoDataset(Dataset):
             包含图像、文本和标签的字典
         """
         row = self.df.iloc[idx]
-        
-        # 构建图片文件夹路径
-        folder_path = os.path.join(
-            self.config.DATA_DIR,
-            row['dataset_folder'],
-            row['video_id']
-        )
-        
-        # 加载图像
-        images, num_images = self._load_images(folder_path)
+
+        if self.package_mode and 'image_paths' in row and isinstance(row['image_paths'], (list, tuple)):
+            images, num_images = self._load_images_from_path_list(row['image_paths'])
+        else:
+            folder_path = os.path.join(
+                self.config.DATA_DIR,
+                row['dataset_folder'],
+                row['video_id']
+            )
+            images, num_images = self._load_images(folder_path)
         
         # 编码文本
         input_ids, attention_mask = self._encode_text(row['title'])

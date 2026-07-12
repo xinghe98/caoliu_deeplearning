@@ -113,19 +113,34 @@ class Predictor:
         )
         return encoding['input_ids'], encoding['attention_mask']
     
-    def predict(self, folder_path, title):
-        """单个预测"""
-        images, num_images = self._load_images(folder_path)
+    def _load_images_from_paths(self, image_paths):
+        """Load and pad images from an explicit path list."""
+        images = []
+        for img_path in list(image_paths)[: self.config.MAX_IMAGES_PER_VIDEO]:
+            try:
+                img = Image.open(img_path)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                images.append(self.transform(img))
+            except Exception:
+                continue
+        if len(images) == 0:
+            raise ValueError(f'无法从路径列表加载图片: {image_paths}')
+        num_images = len(images)
+        while len(images) < self.config.MAX_IMAGES_PER_VIDEO:
+            images.append(torch.zeros(3, self.config.IMAGE_SIZE, self.config.IMAGE_SIZE))
+        return torch.stack(images).unsqueeze(0), num_images
+
+    def predict_from_paths(self, image_paths, title):
+        """Predict using explicit image file paths instead of a folder scan."""
+        images, num_images = self._load_images_from_paths(image_paths)
         images = images.to(self.device)
-        
         input_ids, attention_mask = self._encode_text(title)
         input_ids = input_ids.to(self.device)
         attention_mask = attention_mask.to(self.device)
-        
         with torch.no_grad():
             logits = self.model(images, [num_images], input_ids, attention_mask)
             prob = torch.sigmoid(logits / self.temperature).item()
-        
         is_good = prob >= self.decision_threshold
         return {
             'probability': prob,
@@ -137,6 +152,17 @@ class Predictor:
             'decision_threshold': self.decision_threshold,
             'model_version': self.model_version,
         }
+
+    def predict(self, folder_path, title):
+        """单个预测"""
+        image_paths = sorted(
+            glob.glob(os.path.join(folder_path, "*.jpg")) +
+            glob.glob(os.path.join(folder_path, "*.jpeg")) +
+            glob.glob(os.path.join(folder_path, "*.gif")) +
+            glob.glob(os.path.join(folder_path, "*.png")) +
+            glob.glob(os.path.join(folder_path, "*.webp"))
+        )
+        return self.predict_from_paths(image_paths, title)
     
     def predict_from_url(self, image_urls, title=""):
         """通过图片URL预测

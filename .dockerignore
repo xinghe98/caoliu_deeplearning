@@ -1,30 +1,57 @@
-# Git
 .git
 .gitignore
+.github
 
 # Python
 __pycache__
-*.pyc
-*.pyo
+**/__pycache__
+*.py[cod]
 *.egg-info
 .eggs
 venv
 .venv
 env
+.pytest_tmp
+.pytest_cache
+.mypy_cache
+.ruff_cache
 
-# 数据集 (不打包进镜像)
-数据集1/
-数据集2/
-数据集3/
+# Env & local data
+.env
+.env.*
+!.env.docker.example
+platform_data/
+deploy_data/
+.pytest_tmp/
 
-# IDE
-.idea
-.vscode
-*.swp
+# Frontend (rebuilt in image)
+frontend/node_modules/
+frontend/dist/
 
-# 其他
-*.log
+# Datasets & large local assets
+数据集*/
+downloads/
+*.pth
+*.pt
+*.ckpt
+*.zip
+runs/
+logs/
+checkpoints/
 *.csv
-train.py
-dataset.py
-utils/
+!requirements.txt
+
+# Docs / IDE (keep README out of context bloat)
+.idea/
+.vscode/
+*.md
+!platform_app/README.md
+
+# Old single-file API artefacts not needed for platform image
+# (api.py still copied only if present — omit heavy junk)
+*.log
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp

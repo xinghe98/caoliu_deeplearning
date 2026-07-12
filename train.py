@@ -33,6 +33,10 @@ def parse_args():
     parser.add_argument('--resume', action='store_true', help='从新版 checkpoint 继续训练')
     parser.add_argument('--epochs', type=int, default=None, help='覆盖总训练轮数')
     parser.add_argument('--batch-size', type=int, default=None, help='覆盖批次大小')
+    parser.add_argument('--package', type=str, default=None, help='平台训练 ZIP 或解压目录')
+    parser.add_argument('--split-manifest', type=str, default=None, help='固定 split manifest CSV')
+    parser.add_argument('--output-dir', type=str, default=None, help='产物输出目录')
+    parser.add_argument('--run-id', type=str, default=None, help='训练 run id，写入报告')
     return parser.parse_args()
 
 
@@ -119,34 +123,73 @@ def main():
 
     set_seed(config.RANDOM_SEED)
     device = get_device()
-    df = load_dataset(config)
-    external_folders = set(config.EXTERNAL_TEST_FOLDERS)
-    external_df = df[df['dataset_folder'].isin(external_folders)].copy().reset_index(drop=True)
-    development_df = df[~df['dataset_folder'].isin(external_folders)].copy().reset_index(drop=True)
-    if len(external_df) and external_df['label'].nunique() < 2:
-        raise ValueError('外部测试集必须同时包含正、负样本')
-    train_df, val_df = split_train_validation(
-        development_df, config.VALIDATION_FRACTION, config.RANDOM_SEED
-    )
-    print(f'训练集: {len(train_df)} | 验证集: {len(val_df)} | 锁定外部测试集: {len(external_df)}')
+    output_dir = args.output_dir or config.DATA_DIR
+    os.makedirs(output_dir, exist_ok=True)
 
-    manifest = pd.concat([
-        train_df.assign(split='train'), val_df.assign(split='validation'),
-        external_df.assign(split='external_test'),
-    ], ignore_index=True)
-    manifest.to_csv(os.path.join(config.DATA_DIR, 'split_manifest.csv'), index=False, encoding='utf-8-sig')
-    manifest_hash = data_manifest_hash(manifest)
+    if args.package:
+        from dataset import load_training_package
+        package = load_training_package(args.package, split_manifest=args.split_manifest)
+        package_df = package.dataframe
+        if package_df['split'].isin(['external_test']).any():
+            # Keep external rows for reporting only; never train on them.
+            pass
+        train_df = package_df[package_df['split'] == 'train'].copy().reset_index(drop=True)
+        val_df = package_df[package_df['split'] == 'validation'].copy().reset_index(drop=True)
+        external_df = package_df[package_df['split'] == 'external_test'].copy().reset_index(drop=True)
+        shadow_df = package_df[package_df['split'] == 'production_shadow_test'].copy().reset_index(drop=True)
+        if len(train_df) == 0 or len(val_df) == 0:
+            raise ValueError('训练包必须包含 train 与 validation 样本')
+        if train_df['label'].nunique() < 2:
+            raise ValueError('训练集必须同时包含正、负样本')
+        print(
+            f'训练包模式 run_id={args.run_id or "-"} | 训练:{len(train_df)} 验证:{len(val_df)} '
+            f'影子测试:{len(shadow_df)} 外部测试:{len(external_df)}'
+        )
+        manifest = package_df.copy()
+        manifest_hash = data_manifest_hash(manifest)
+        manifest.to_csv(os.path.join(output_dir, 'split_manifest.csv'), index=False, encoding='utf-8-sig')
+        package_mode = True
+    else:
+        df = load_dataset(config)
+        external_folders = set(config.EXTERNAL_TEST_FOLDERS)
+        external_df = df[df['dataset_folder'].isin(external_folders)].copy().reset_index(drop=True)
+        development_df = df[~df['dataset_folder'].isin(external_folders)].copy().reset_index(drop=True)
+        if len(external_df) and external_df['label'].nunique() < 2:
+            raise ValueError('外部测试集必须同时包含正、负样本')
+        train_df, val_df = split_train_validation(
+            development_df, config.VALIDATION_FRACTION, config.RANDOM_SEED
+        )
+        print(f'训练集: {len(train_df)} | 验证集: {len(val_df)} | 锁定外部测试集: {len(external_df)}')
+        manifest = pd.concat([
+            train_df.assign(split='train'), val_df.assign(split='validation'),
+            external_df.assign(split='external_test'),
+        ], ignore_index=True)
+        manifest.to_csv(os.path.join(output_dir, 'split_manifest.csv'), index=False, encoding='utf-8-sig')
+        manifest_hash = data_manifest_hash(manifest)
+        package_mode = False
 
     tokenizer = BertTokenizer.from_pretrained(config.BERT_MODEL_NAME)
-    train_loader = DataLoader(VideoDataset(train_df, config, tokenizer, is_training=True), batch_size=config.BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(VideoDataset(val_df, config, tokenizer, is_training=False), batch_size=config.BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(
+        VideoDataset(train_df, config, tokenizer, is_training=True, package_mode=package_mode),
+        batch_size=config.BATCH_SIZE,
+        shuffle=True,
+    )
+    val_loader = DataLoader(
+        VideoDataset(val_df, config, tokenizer, is_training=False, package_mode=package_mode),
+        batch_size=config.BATCH_SIZE,
+        shuffle=False,
+    )
     external_loader = None
     if len(external_df):
-        external_loader = DataLoader(VideoDataset(external_df, config, tokenizer, is_training=False), batch_size=config.BATCH_SIZE, shuffle=False)
+        external_loader = DataLoader(
+            VideoDataset(external_df, config, tokenizer, is_training=False, package_mode=package_mode),
+            batch_size=config.BATCH_SIZE,
+            shuffle=False,
+        )
 
     model = MultiModalClassifier(config).to(device)
     criterion = nn.BCEWithLogitsLoss()
-    checkpoint_path = os.path.join(config.DATA_DIR, config.MODEL_SAVE_PATH)
+    checkpoint_path = os.path.join(output_dir, config.MODEL_SAVE_PATH)
     start_epoch = 0
     best_pr_auc = -float('inf')
     patience = 0
@@ -199,7 +242,7 @@ def main():
             }
             torch.save(checkpoint, checkpoint_path)
             write_prediction_artifacts(
-                samples, config.DATA_DIR, 'validation', metrics['threshold']
+                samples, output_dir, 'validation', metrics['threshold']
             )
             print('✓ 已按验证 PR-AUC 保存最佳模型')
         else:
@@ -210,7 +253,12 @@ def main():
 
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
-    report = {'validation': checkpoint['metrics'], 'data_manifest_hash': manifest_hash}
+    report = {
+        'validation': checkpoint['metrics'],
+        'data_manifest_hash': manifest_hash,
+        'run_id': args.run_id,
+        'package_mode': package_mode,
+    }
     if external_loader is not None:
         _, _, _, labels, _, video_ids, titles, folders, logits = validate(model, external_loader, criterion, device)
         probabilities = apply_temperature(logits, checkpoint['temperature'])
@@ -221,18 +269,26 @@ def main():
             'prediction': (probabilities >= checkpoint['decision_threshold']).astype(int),
         })
         report['external_test_error_count'] = write_prediction_artifacts(
-            external_samples, config.DATA_DIR, 'external_test', checkpoint['decision_threshold']
+            external_samples, output_dir, 'external_test', checkpoint['decision_threshold']
         )
         print(f"外部测试 PR-AUC={report['external_test']['pr_auc']:.4f}, precision={report['external_test']['precision']:.2%}")
-    validation_samples = pd.read_csv(os.path.join(config.DATA_DIR, 'validation_predictions.csv'), encoding='utf-8-sig')
+    validation_samples = pd.read_csv(os.path.join(output_dir, 'validation_predictions.csv'), encoding='utf-8-sig')
     report['validation_error_count'] = int(
         (validation_samples['prediction'] != validation_samples['true_label']).sum()
     )
-    with open(os.path.join(config.DATA_DIR, 'evaluation_report.json'), 'w', encoding='utf-8') as handle:
+    with open(os.path.join(output_dir, 'evaluation_report.json'), 'w', encoding='utf-8') as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2, allow_nan=False)
-    with open(os.path.join(config.DATA_DIR, 'training_history.json'), 'w', encoding='utf-8') as handle:
+    with open(os.path.join(output_dir, 'training_history.json'), 'w', encoding='utf-8') as handle:
         json.dump(history, handle, ensure_ascii=False, indent=2)
-    plot_training_history(history['train_loss'], history['validation_loss'], history['train_accuracy'], history['validation_pr_auc'], os.path.join(config.DATA_DIR, 'training_history.png'))
+    plot_training_history(
+        history['train_loss'],
+        history['validation_loss'],
+        history['train_accuracy'],
+        history['validation_pr_auc'],
+        os.path.join(output_dir, 'training_history.png'),
+    )
+    if args.package:
+        package.close()
 
 
 if __name__ == '__main__':

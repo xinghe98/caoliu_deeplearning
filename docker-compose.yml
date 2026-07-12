@@ -1,0 +1,63 @@
+# Preference platform: API (SPA) + prediction worker
+# Usage: see DEPLOY.md and scripts/deploy.sh
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: preference-platform:local
+    container_name: preference-api
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      PLATFORM_DATA_DIR: /data/platform_data
+      HF_HOME: /data/platform_data/hf_cache
+      TRANSFORMERS_CACHE: /data/platform_data/hf_cache
+    volumes:
+      - ${PLATFORM_DATA_HOST:-./deploy_data/platform_data}:/data/platform_data
+      - ${MODEL_HOST_DIR:-./deploy_data/models}:/data/models:ro
+      - ${MEDIA_HOST_DIR:-./deploy_data/media}:/data/media:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 40s
+
+  worker:
+    image: preference-platform:local
+    container_name: preference-worker
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    command:
+      [
+        "python",
+        "-m",
+        "platform_app.worker",
+        "--batch-size",
+        "${WORKER_BATCH_SIZE:-8}",
+        "--poll-seconds",
+        "${WORKER_POLL_SECONDS:-5}",
+      ]
+    env_file:
+      - .env
+    environment:
+      PLATFORM_DATA_DIR: /data/platform_data
+      HF_HOME: /data/platform_data/hf_cache
+      TRANSFORMERS_CACHE: /data/platform_data/hf_cache
+    volumes:
+      - ${PLATFORM_DATA_HOST:-./deploy_data/platform_data}:/data/platform_data
+      - ${MODEL_HOST_DIR:-./deploy_data/models}:/data/models:ro
+      - ${MEDIA_HOST_DIR:-./deploy_data/media}:/data/media:ro
