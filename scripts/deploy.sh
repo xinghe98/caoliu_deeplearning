@@ -228,7 +228,11 @@ if [[ "$DO_UP" -eq 1 ]]; then
   log "Waiting for API health..."
   ok=0
   for i in $(seq 1 60); do
-    if curl -fsS "http://127.0.0.1:${HOST_PORT}/health/ready" >/dev/null 2>&1; then
+    # The container healthcheck verifies the same endpoint from inside the
+    # API network namespace. This avoids false failures on hosts whose
+    # loopback/port-forwarding policy prevents the deploy user from curling
+    # the published port.
+    if [[ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' preference-api 2>/dev/null || true)" == "healthy" ]]; then
       ok=1
       break
     fi
