@@ -1,0 +1,7 @@
+.git
+.env
+.venv
+downloads
+**/__pycache__
+*.py[cod]
+.scrapy

@@ -1,4 +1,4 @@
-# Preference platform: API (SPA) + prediction worker
+# Preference platform: API (SPA) + prediction worker + crawler
 # Usage: see DEPLOY.md and scripts/deploy.sh
 
 services:
@@ -61,3 +61,26 @@ services:
       - ${PLATFORM_DATA_HOST:-./deploy_data/platform_data}:/data/platform_data
       - ${MODEL_HOST_DIR:-./deploy_data/models}:/data/models:ro
       - ${MEDIA_HOST_DIR:-./deploy_data/media}:/data/media:ro
+
+  crawler:
+    build:
+      context: ./caoliuSpider
+      dockerfile: Dockerfile
+    image: preference-crawler:local
+    container_name: preference-crawler
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PLATFORM_API_URL: http://api:8080
+      PLATFORM_INGEST_REQUIRED: "true"
+      CAOLIU_DOWNLOAD_DIR: /data/media
+      IMAGES_STORE: /data/media
+      CRAWLER_INTERVAL_SECONDS: ${CRAWLER_INTERVAL_SECONDS:-21600}
+      CRAWLER_START_PAGE: ${CRAWLER_START_PAGE:-1}
+      CRAWLER_MAX_PAGES: ${CRAWLER_MAX_PAGES:-4}
+    volumes:
+      - ${MEDIA_HOST_DIR:-./deploy_data/media}:/data/media

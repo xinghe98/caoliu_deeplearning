@@ -67,9 +67,10 @@ export HOST_PORT=8080
 2. 创建 `deploy_data/{platform_data,models,media}`（可改路径）  
 3. 若无 `.env`，从 `.env.docker.example` 生成并写入随机 `INGEST_API_KEY`  
 4. 处理模型文件（`MODEL_FILE` 或目录内首个 `.pth` → `best_model.pth`）  
-5. `docker compose build` + `up -d`  
-6. 等待 `GET /health/ready`  
-7. 打印访问地址与后续提示  
+5. 构建平台镜像与爬虫镜像
+6. 启动 API、worker、爬虫，等待 `GET /health/ready`
+7. 爬虫按计划自动采集并将图片写入共享媒体目录
+8. 打印访问地址与后续提示
 
 ### 常用命令
 
@@ -94,6 +95,9 @@ export HOST_PORT=8080
 | `MODEL_FILE` | 空 | 复制到 `MODEL_HOST_DIR/best_model.pth` |
 | `WORKER_BATCH_SIZE` | `8` | worker 批大小 |
 | `WORKER_POLL_SECONDS` | `5` | 空闲轮询间隔 |
+| `CRAWLER_INTERVAL_SECONDS` | `21600` | 爬虫运行周期（秒）；`0` 表示只运行一次后退出 |
+| `CRAWLER_START_PAGE` | `1` | 每轮起始页 |
+| `CRAWLER_MAX_PAGES` | `4` | 每轮抓取页数 |
 | `INGEST_API_KEY` | 自动生成 | 仅在**首次**生成 `.env` 时生效；也可手改 `.env` |
 | `SKIP_BUILD` | `0` | `1` 跳过 build |
 | `COMPOSE_PROJECT_NAME` | `preference-platform` | Compose 项目名 |
@@ -118,24 +122,25 @@ docker compose exec worker python -m platform_app.requeue_predictions
 
 ---
 
-## 5. 爬虫对接
+## 5. 爬虫服务
 
-爬虫与平台密钥一致：
+爬虫已经集成到 Compose，执行 `./scripts/deploy.sh` 后会在 API 就绪时自动启动。容器内配置为：
 
 ```bash
-export PLATFORM_API_URL=http://<服务器局域网IP>:8080
-export INGEST_API_KEY=<与 .env 中相同>
+PLATFORM_API_URL=http://api:8080
+CAOLIU_DOWNLOAD_DIR=/data/media
+IMAGES_STORE=/data/media
 ```
 
-**关键**：爬虫写入的图片绝对路径，必须落在 **宿主机 `MEDIA_HOST_DIR` 目录树内**，因为容器只读挂载该目录为 `/data/media`。
+爬虫通过同一个 `.env` 获取 `INGEST_API_KEY`。爬虫以读写方式、API/worker 以只读方式挂载同一个 `MEDIA_HOST_DIR`，所以入库的 `/data/media/...` 绝对路径在所有服务中一致。
 
-推荐做法：
+常用操作：
 
-- 爬虫下载目录 = `MEDIA_HOST_DIR`（或子目录）  
-- 入库时 `source_path` 使用容器内路径，或  
-- 更简单：宿主机路径与容器路径一致（例如都用 `/data/media/...`，在宿主机也 bind 到同一路径）
-
-若爬虫仍写 Windows/旧路径，需要迁移文件到 `MEDIA_HOST_DIR` 并改库内路径，或增加额外 volume（改 `docker-compose.yml` 的 `volumes` + `ALLOWED_MEDIA_ROOTS`）。
+```bash
+docker compose logs -f crawler        # 查看爬虫日志
+docker compose restart crawler        # 立即重启并开始新一轮
+CRAWLER_INTERVAL_SECONDS=3600 ./scripts/deploy.sh --recreate
+```
 
 ---
 
@@ -145,7 +150,7 @@ export INGEST_API_KEY=<与 .env 中相同>
 |----------------|------|------|
 | `deploy_data/platform_data` | `/data/platform_data` | `platform.db`、候选、训练 ZIP、HF 缓存 |
 | `deploy_data/models` | `/data/models` | `best_model.pth` 等 |
-| `deploy_data/media` | `/data/media` | 原图（只读） |
+| `deploy_data/media` | `/data/media` | 原图（爬虫写入，平台只读） |
 
 备份建议：
 
@@ -253,7 +258,6 @@ server {
 | 项 | 说明 |
 |----|------|
 | 默认 GPU 镜像 | 当前为 **CPU** PyTorch；GPU 需自定义 Dockerfile + `deploy.gpu.yml` |
-| 爬虫进 Compose | 仍在独立仓库运行 |
 | K8s | 未提供 |
 | 自动 HTTPS | 需自备反代 |
 
@@ -264,7 +268,9 @@ server {
 | 文件 | 作用 |
 |------|------|
 | `Dockerfile` | 前端构建 + Python 运行时 |
-| `docker-compose.yml` | api + worker |
+| `docker-compose.yml` | api + worker + crawler |
+| `caoliuSpider/Dockerfile` | Scrapy 爬虫镜像 |
+| `caoliuSpider/docker-entrypoint.sh` | 定时运行入口 |
 | `.env.docker.example` | 容器环境模板 |
 | `scripts/deploy.sh` | 一键部署 |
 | `scripts/deploy-down.sh` | 停止 |

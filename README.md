@@ -5,7 +5,7 @@
 1. **多模态偏好模型**：用缩略图 + 标题预测内容是否符合个人偏好（ResNet-50 + 中文 BERT）。
 2. **局域网个人平台**：爬虫入库 → 模型打分 → Web 喜欢/不喜欢标注 → 训练包导出 → 临时 GPU 训练 → 候选模型人工发布。
 
-配套爬虫仓库：`C:\Users\mysta\Documents\caoliuSpider`（采集与入库，不负责训练/发布）。
+`caoliuSpider/` 已并入本仓库，负责采集、下载图片和调用平台入库 API。
 
 ---
 
@@ -94,7 +94,7 @@
 | 数据库 | SQLite（WAL、外键、busy_timeout） |
 | 任务 | 独立 Python worker，DB 任务表领取（无 Redis/Celery） |
 | 模型 | PyTorch、ResNet-50、`bert-base-chinese`、温度校准 + 业务阈值 |
-| 爬虫 | Scrapy（独立仓库） |
+| 爬虫 | Scrapy（同仓库 Compose 服务） |
 
 ---
 
@@ -185,7 +185,7 @@ caoliu_deeplearning/
 
 | 路径 | 用途 |
 |------|------|
-| `C:\Users\mysta\Documents\caoliuSpider` | Scrapy 爬虫；下载完成后调用入库 API |
+| `caoliuSpider/` | Scrapy 爬虫；下载完成后调用入库 API |
 
 ---
 
@@ -233,7 +233,7 @@ PLATFORM_DATA_DIR=C:\Users\mysta\Documents\caoliu_deeplearning\platform_data
 # DATABASE_URL=sqlite:///C:/Users/mysta/Documents/caoliu_deeplearning/platform_data/platform.db
 
 # 允许读取的图片根目录（分号分隔，Windows）
-ALLOWED_MEDIA_ROOTS=C:\Users\mysta\Documents\caoliu_deeplearning;C:\Users\mysta\Documents\caoliuSpider\downloads
+ALLOWED_MEDIA_ROOTS=C:\Users\mysta\Documents\caoliu_deeplearning;C:\Users\mysta\Documents\caoliu_deeplearning\downloads
 
 # 爬虫入库密钥（务必改成足够长的随机串）
 INGEST_API_KEY=replace-with-a-long-random-value
@@ -260,7 +260,7 @@ AUTO_CREATE_TABLES=true
 ```powershell
 cd C:\Users\mysta\Documents\caoliu_deeplearning
 # 按需设置环境变量，或依赖 .env
-$env:ALLOWED_MEDIA_ROOTS = "C:\Users\mysta\Documents\caoliu_deeplearning;C:\Users\mysta\Documents\caoliuSpider\downloads"
+$env:ALLOWED_MEDIA_ROOTS = "C:\Users\mysta\Documents\caoliu_deeplearning;C:\Users\mysta\Documents\caoliu_deeplearning\downloads"
 $env:INGEST_API_KEY = "replace-with-a-long-random-value"
 
 python -m uvicorn platform_app.main:app --host 0.0.0.0 --port 8080 --reload
@@ -381,7 +381,7 @@ export MODEL_FILE=/path/to/best_model.pth
 ./scripts/deploy.sh
 ```
 
-将启动 `api`（含前端）+ `worker`，数据与模型通过宿主机目录挂载。
+将启动 `api`（含前端）+ `worker` + `crawler`，爬虫与平台通过共享媒体目录衔接。
 
 ### 7.2 最小生产启动（Windows 本机）
 
@@ -392,7 +392,7 @@ cd C:\Users\mysta\Documents\caoliu_deeplearning
 python -m pip install -r requirements.txt
 
 # 2) 环境变量（建议用 .env 或系统环境变量）
-$env:ALLOWED_MEDIA_ROOTS = "C:\Users\mysta\Documents\caoliu_deeplearning;C:\Users\mysta\Documents\caoliuSpider\downloads"
+$env:ALLOWED_MEDIA_ROOTS = "C:\Users\mysta\Documents\caoliu_deeplearning;C:\Users\mysta\Documents\caoliu_deeplearning\downloads"
 $env:INGEST_API_KEY = "你的长随机密钥"
 $env:PLATFORM_DATA_DIR = "C:\Users\mysta\Documents\caoliu_deeplearning\platform_data"
 
@@ -462,7 +462,7 @@ python -m platform_app.worker --batch-size 32 --poll-seconds 5
 
 ## 9. 爬虫集成
 
-仓库：`C:\Users\mysta\Documents\caoliuSpider`
+目录：`caoliuSpider/`
 
 ### 9.1 配置
 
@@ -478,9 +478,11 @@ $env:PLATFORM_INGEST_REQUIRED = "true"
 启动顺序：先启动平台 API 和 worker，再从爬虫项目目录执行：
 
 ```powershell
-cd C:\Users\mysta\Documents\caoliuSpider\caoliu
+cd C:\Users\mysta\Documents\caoliu_deeplearning\caoliuSpider\caoliu
 scrapy crawl caoliu
 ```
+
+Docker 部署无需手动执行上述命令；`crawler` 服务默认每 6 小时运行一次。通过 `CRAWLER_INTERVAL_SECONDS`、`CRAWLER_START_PAGE`、`CRAWLER_MAX_PAGES` 调整计划，详见 [DEPLOY.md](./DEPLOY.md)。
 
 每个已完成图片下载的内容都会异步入库；入库结果写入 `downloads/platform_ingest.jsonl`，状态为 `succeeded`、`failed` 或 `skipped`。网络错误、429 和 5xx 默认最多重试 3 次；4xx 会立即记录失败，通常表示密钥、图片路径或请求内容需要修复。
 

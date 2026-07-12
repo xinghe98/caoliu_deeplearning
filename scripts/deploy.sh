@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click Linux deploy for preference platform (API + worker + SPA).
+# One-click Linux deploy for preference platform (API + worker + SPA + crawler).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,6 +13,9 @@ MEDIA_HOST_DIR="${MEDIA_HOST_DIR:-$ROOT/deploy_data/media}"
 MODEL_FILE="${MODEL_FILE:-}"
 WORKER_BATCH_SIZE="${WORKER_BATCH_SIZE:-8}"
 WORKER_POLL_SECONDS="${WORKER_POLL_SECONDS:-5}"
+CRAWLER_INTERVAL_SECONDS="${CRAWLER_INTERVAL_SECONDS:-21600}"
+CRAWLER_START_PAGE="${CRAWLER_START_PAGE:-1}"
+CRAWLER_MAX_PAGES="${CRAWLER_MAX_PAGES:-4}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-preference-platform}"
 
@@ -29,7 +32,7 @@ Usage: ./scripts/deploy.sh [options]
 Options:
   --build-only     Build images only
   --down           Stop and remove containers (keeps host data dirs)
-  --logs           Follow api+worker logs after start (or alone)
+  --logs           Follow api+worker+crawler logs after start (or alone)
   --recreate       Force recreate containers
   --skip-build     Skip docker build (use existing image)
   -h, --help       Show this help
@@ -41,6 +44,9 @@ Environment:
   MEDIA_HOST_DIR         Media root mounted at /data/media (default ./deploy_data/media)
   MODEL_FILE             Optional host .pth to copy/link as best_model.pth
   WORKER_BATCH_SIZE      Default 8
+  CRAWLER_INTERVAL_SECONDS  Crawl interval; 21600 = 6h, 0 = run once
+  CRAWLER_START_PAGE     First list page (default 1)
+  CRAWLER_MAX_PAGES      Pages per crawl (default 4)
   INGEST_API_KEY         If set when generating .env, used as-is
 EOF
 }
@@ -77,6 +83,7 @@ fi
 export COMPOSE_PROJECT_NAME
 export HOST_PORT PLATFORM_DATA_HOST MODEL_HOST_DIR MEDIA_HOST_DIR
 export WORKER_BATCH_SIZE WORKER_POLL_SECONDS
+export CRAWLER_INTERVAL_SECONDS CRAWLER_START_PAGE CRAWLER_MAX_PAGES
 
 compose() { "${COMPOSE[@]}" "$@"; }
 
@@ -102,7 +109,7 @@ fi
 
 # ---------- logs only ----------
 if [[ "$DO_LOGS" -eq 1 && "$DO_UP" -eq 0 && "$DO_BUILD" -eq 0 ]]; then
-  compose logs -f api worker
+  compose logs -f api worker crawler
   exit 0
 fi
 
@@ -146,7 +153,7 @@ fi
 
 if [[ -z "$(find "$MEDIA_HOST_DIR" -type f 2>/dev/null | head -n 1)" ]]; then
   warn "Media directory is empty: $MEDIA_HOST_DIR"
-  warn "Mount your crawler/dataset tree via MEDIA_HOST_DIR before ingest."
+  warn "Media directory is initially empty; the crawler will populate it after startup."
 fi
 
 # ---------- .env ----------
@@ -211,7 +218,7 @@ fi
 
 # ---------- up ----------
 if [[ "$DO_UP" -eq 1 ]]; then
-  log "Starting api + worker..."
+  log "Starting api + worker + crawler..."
   if [[ "$RECREATE" -eq 1 ]]; then
     compose up -d --force-recreate --remove-orphans
   else
@@ -229,7 +236,7 @@ if [[ "$DO_UP" -eq 1 ]]; then
   done
   if [[ "$ok" -ne 1 ]]; then
     warn "Health check timed out. Recent logs:"
-    compose logs --tail=80 api worker || true
+    compose logs --tail=80 api worker crawler || true
     die "API not ready on port $HOST_PORT"
   fi
 
@@ -255,9 +262,9 @@ if [[ "$DO_UP" -eq 1 ]]; then
   Stop:     ./scripts/deploy.sh --down
   Requeue:  docker compose exec worker python -m platform_app.requeue_predictions
 
-  Crawler:  PLATFORM_API_URL=http://${lan_ip}:${HOST_PORT}
-            INGEST_API_KEY=<same as .env>
-            Media paths must live under MEDIA_HOST_DIR so the container can read them.
+  Crawler:  runs automatically every ${CRAWLER_INTERVAL_SECONDS}s
+            pages ${CRAWLER_START_PAGE}..$((CRAWLER_START_PAGE + CRAWLER_MAX_PAGES - 1))
+            docker compose logs -f crawler
 
   Docs:     DEPLOY.md
 ========================================
@@ -265,5 +272,5 @@ EOF
 fi
 
 if [[ "$DO_LOGS" -eq 1 ]]; then
-  compose logs -f api worker
+  compose logs -f api worker crawler
 fi

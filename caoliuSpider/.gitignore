@@ -1,0 +1,6 @@
+downloads
+.env
+.venv
+__pycache__/
+*.py[cod]
+.scrapy/
