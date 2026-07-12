@@ -31,7 +31,7 @@ export function ContentBody({
           <h2 className="page-heading max-w-3xl text-2xl leading-snug break-words">{item.title_clean || '无标题'}</h2>
           <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted">
             <span>模型 {item.model_version || '尚未指定'}</span>
-            <span>{new Date(item.created_at).toLocaleString()}</span>
+            <span>采集于 {new Date(item.created_at).toLocaleString('zh-CN')}</span>
           </div>
 
           <MagnetActions item={item} onCopy={onCopyMagnet} onOpen={onOpenMagnet} />

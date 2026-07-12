@@ -19,6 +19,12 @@ function scoreText(item: ContentRead) {
   return `${(item.probability * 100).toFixed(0)}%`
 }
 
+function crawledAtText(createdAt: string) {
+  const time = new Date(createdAt)
+  if (Number.isNaN(time.getTime())) return '采集时间未知'
+  return `采集于 ${time.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })}`
+}
+
 export function LibraryPage() {
   const [label, setLabel] = useState<'all' | '1' | '0' | 'unlabeled'>('all')
   const [showTop, setShowTop] = useState(false)
@@ -143,6 +149,9 @@ export function LibraryPage() {
                   <span className={`truncate ${item.current_label === 1 ? 'text-like' : item.current_label === 0 ? 'text-dislike' : ''}`}>{labelText(item)}</span>
                   <span className="shrink-0 tabular-nums">{scoreText(item)}</span>
                 </div>
+                <p className="truncate text-xs text-muted" title={new Date(item.created_at).toLocaleString('zh-CN')}>
+                  {crawledAtText(item.created_at)}
+                </p>
               </div>
             </Link>
           )
