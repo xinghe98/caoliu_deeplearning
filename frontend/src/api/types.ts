@@ -28,6 +28,10 @@ export type ContentPage = {
   next_cursor: string | null
 }
 
+export type LabelResultRead = ContentRead & {
+  label_event_id: string
+}
+
 export type SessionRead = {
   username: string
 }

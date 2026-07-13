@@ -48,6 +48,7 @@ from .schemas import (
     JobStatsRead,
     LabelCreate,
     LabelEventRead,
+    LabelResultRead,
     LoginRequest,
     ModelRead,
     ModelRegister,
@@ -348,7 +349,7 @@ def get_feed(
     return [content_read(item) for item in feed_contents(session, limit, mode)]
 
 
-@app.post('/api/v1/contents/{content_id}/label', response_model=ContentRead)
+@app.post('/api/v1/contents/{content_id}/label', response_model=LabelResultRead)
 def label_content(
     content_id: str,
     payload: LabelCreate,
@@ -361,9 +362,9 @@ def label_content(
     if idempotency_key:
         existing = get_idempotent_response(session, user.id, idempotency_key, request_hash)
         if existing:
-            return ContentRead.model_validate(existing.response_body)
+            return LabelResultRead.model_validate(existing.response_body)
     content = get_content_or_404(session, content_id)
-    apply_label(
+    event = apply_label(
         session,
         content,
         payload.label,
@@ -373,7 +374,10 @@ def label_content(
     )
     maybe_queue_training_snapshot(session)
     session.commit()
-    result = content_read(get_content_or_404(session, content_id))
+    result = LabelResultRead(
+        **content_read(get_content_or_404(session, content_id)).model_dump(),
+        label_event_id=event.id,
+    )
     if idempotency_key:
         save_idempotent_response(session, user.id, idempotency_key, request_hash, 200, result.model_dump(mode='json'))
     return result

@@ -62,6 +62,10 @@ class LabelCreate(BaseModel):
     probability_at_label: float | None = Field(default=None, ge=0, le=1)
 
 
+class LabelResultRead(ContentRead):
+    label_event_id: str
+
+
 class LabelEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str

@@ -76,3 +76,36 @@ export function magnetSummary(magnet: string): string {
   if (match) return `magnet …${match[1].slice(0, 8).toLowerCase()}`
   return magnet.length > 36 ? `${magnet.slice(0, 36)}…` : magnet
 }
+
+export async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Fall through for browsers that expose Clipboard API but deny its use.
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.readOnly = true
+  textarea.setAttribute('aria-hidden', 'true')
+  Object.assign(textarea.style, {
+    position: 'fixed',
+    inset: '0 auto auto 0',
+    width: '1px',
+    height: '1px',
+    opacity: '0',
+    fontSize: '16px',
+  })
+  document.body.appendChild(textarea)
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+
+  try {
+    if (!document.execCommand('copy')) throw new Error('copy command was rejected')
+  } finally {
+    textarea.remove()
+  }
+}

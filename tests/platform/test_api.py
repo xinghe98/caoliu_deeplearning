@@ -87,15 +87,18 @@ def test_label_history_undo_idempotency_and_feed(auth_client, platform_env):
         headers={'Idempotency-Key': 'label-1'},
     )
     assert labeled.status_code == 200
+    label_event_id = labeled.json()['label_event_id']
     again = auth_client.post(
         f'/api/v1/contents/{content_id}/label',
         json={'label': 1},
         headers={'Idempotency-Key': 'label-1'},
     )
     assert again.status_code == 200
+    assert again.json()['label_event_id'] == label_event_id
     history = auth_client.get(f'/api/v1/labels/history?content_id={content_id}')
     assert len(history.json()) == 1
     event_id = history.json()[0]['id']
+    assert label_event_id == event_id
     feed_after = auth_client.get('/api/v1/feed')
     assert all(item['id'] != content_id for item in feed_after.json())
     undo = auth_client.post(f'/api/v1/labels/{event_id}/undo')

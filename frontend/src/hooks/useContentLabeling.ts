@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { contentApi, labelsApi } from '../api/endpoints'
-import { HttpError } from '../api/client'
+import { copyText, HttpError } from '../api/client'
 import type { ContentRead } from '../api/types'
 import { useToast } from '../components/Toast'
 
@@ -36,8 +36,7 @@ export function useContentLabeling({
   const labelMutation = useMutation({
     mutationFn: async ({ item, label }: { item: ContentRead; label: 0 | 1 }) => {
       const updated = await contentApi.label(item.id, label, createIdempotencyKey())
-      const history = await labelsApi.history(item.id)
-      return { updated, eventId: history[0]?.id ?? null, label }
+      return { updated, eventId: updated.label_event_id, label }
     },
     onSuccess: ({ eventId, label }) => {
       setLastEventId(eventId)
@@ -83,7 +82,7 @@ export function useContentLabeling({
       return
     }
     try {
-      await navigator.clipboard.writeText(item.magnet_uri)
+      await copyText(item.magnet_uri)
       push({ message: '磁力链接已复制' })
       void contentApi.event(item.id, 'copy_magnet').catch(() => undefined)
     } catch {

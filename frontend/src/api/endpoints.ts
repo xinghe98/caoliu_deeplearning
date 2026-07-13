@@ -6,6 +6,7 @@ import type {
   JobRead,
   JobStats,
   LabelEventRead,
+  LabelResultRead,
   ModelRead,
   SessionRead,
   TrainingSnapshotRead,
@@ -43,7 +44,7 @@ export const contentApi = {
   },
   get: (id: string) => api<ContentRead>(`/api/v1/contents/${id}`),
   label: (id: string, label: 0 | 1, idempotencyKey?: string) =>
-    api<ContentRead>(`/api/v1/contents/${id}/label`, {
+    api<LabelResultRead>(`/api/v1/contents/${id}/label`, {
       method: 'POST',
       json: { label },
       idempotencyKey,
