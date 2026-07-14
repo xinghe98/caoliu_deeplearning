@@ -70,11 +70,19 @@ def set_finetuning_stage(model, enabled):
     model.text_encoder.set_last_layers_trainable(enabled)
 
 
-def evaluate(model, loader, criterion, device, target_precision):
+def evaluate(model, loader, criterion, device, target_precision, minimum_threshold=0.0):
     val_loss, _, _, labels, _, video_ids, titles, folders, logits = validate(model, loader, criterion, device)
     temperature = fit_temperature(logits, labels)
     probabilities = apply_temperature(logits, temperature)
-    threshold, threshold_info = select_threshold(labels, probabilities, target_precision)
+    selected_threshold, threshold_info = select_threshold(labels, probabilities, target_precision)
+    threshold = max(float(selected_threshold), float(minimum_threshold))
+    threshold_info = {
+        **threshold_info,
+        'selected_threshold': float(selected_threshold),
+        'minimum_threshold': float(minimum_threshold),
+        'final_threshold': threshold,
+        'floor_applied': threshold > float(selected_threshold),
+    }
     metrics = binary_metrics(labels, probabilities, threshold)
     metrics['loss'] = float(val_loss)
     metrics['temperature'] = temperature
@@ -215,7 +223,14 @@ def main():
             print(f'\nEpoch {epoch + 1}/{config.NUM_EPOCHS} — {stage}')
 
         train_loss, train_accuracy = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
-        metrics, samples = evaluate(model, val_loader, criterion, device, config.TARGET_PRECISION)
+        metrics, samples = evaluate(
+            model,
+            val_loader,
+            criterion,
+            device,
+            config.TARGET_PRECISION,
+            config.MIN_DECISION_THRESHOLD,
+        )
         history['train_loss'].append(float(train_loss))
         history['train_accuracy'].append(float(train_accuracy))
         history['validation_loss'].append(metrics['loss'])

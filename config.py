@@ -41,6 +41,7 @@ class Config:
     USE_FOCAL_LOSS = False
     USE_WEIGHTED_SAMPLER = False
     TARGET_PRECISION = 0.90                        # 默认“好看”筛选的最低精确率
+    MIN_DECISION_THRESHOLD = 0.45                 # 自动阈值不得低于此业务下限
     VALIDATION_FRACTION = 0.2
     EXTERNAL_TEST_FOLDERS = ["数据集3"]            # 训练期间完全隔离的外部测试集
     
