@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+import secrets
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import (
@@ -31,6 +33,7 @@ from .models import (
     MediaAsset,
     ModelVersion,
     Prediction,
+    SnapshotLabelEvent,
     TrainingSnapshot,
     User,
     ViewEvent,
@@ -59,6 +62,7 @@ from .schemas import (
 )
 from .services import (
     build_content_key_and_group,
+    active_model_version,
     content_query,
     content_read,
     feed_contents,
@@ -69,6 +73,7 @@ from .services import (
     parse_cursor,
     parse_score_cursor,
     queue_prediction_job,
+    queue_missing_predictions_for_model,
     save_idempotent_response,
     validate_media_path,
 )
@@ -78,12 +83,31 @@ from .training import create_snapshot
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_engine()
+    engine = get_engine()
+    membership_table_existed = inspect(engine).has_table('snapshot_label_events')
     if get_settings().auto_create_tables:
-        Base.metadata.create_all(bind=get_engine())
+        Base.metadata.create_all(bind=engine)
     from .database import SessionLocal
     from .default_model import ensure_default_model
 
     with SessionLocal() as session:
+        if get_settings().auto_create_tables and not membership_table_existed:
+            session.execute(text("""
+                INSERT INTO snapshot_label_events (event_id, snapshot_id)
+                SELECT label_events.id, (
+                    SELECT training_snapshots.id
+                    FROM training_snapshots
+                    WHERE training_snapshots.label_cutoff_at >= label_events.created_at
+                    ORDER BY training_snapshots.label_cutoff_at ASC
+                    LIMIT 1
+                )
+                FROM label_events
+                WHERE EXISTS (
+                    SELECT 1 FROM training_snapshots
+                    WHERE training_snapshots.label_cutoff_at >= label_events.created_at
+                )
+            """))
+            session.commit()
         ensure_default_model(session)
     yield
 
@@ -174,7 +198,9 @@ def ingest_content(
     session: Session = Depends(get_session),
 ):
     settings = get_settings()
-    if settings.ingest_api_key and x_ingest_key != settings.ingest_api_key:
+    if not settings.ingest_api_key:
+        raise HTTPException(status_code=503, detail='爬虫入库密钥尚未配置')
+    if not secrets.compare_digest(x_ingest_key, settings.ingest_api_key):
         raise HTTPException(status_code=401, detail='无效的爬虫入库密钥')
     content_key, group_id, magnet, info_hash = build_content_key_and_group(payload)
     existing = session.scalar(content_query().where(ContentItem.content_key == content_key))
@@ -190,7 +216,7 @@ def ingest_content(
             created=False,
             duplicate=True,
             prediction_job_id=None,
-            content=content_read(get_content_or_404(session, existing.id)),
+            content=content_read(get_content_or_404(session, existing.id), active_model_version(session)),
         )
 
     inspected = []
@@ -229,7 +255,7 @@ def ingest_content(
         created=True,
         duplicate=False,
         prediction_job_id=job.id,
-        content=content_read(refreshed),
+        content=content_read(refreshed, active_model_version(session)),
     )
 
 
@@ -246,10 +272,12 @@ def list_contents(
     limit = min(max(limit, 1), 100)
     # 全部 / 喜欢 / 不喜欢：按模型概率从高到低；未标注仍按时间
     sort_by_score = not unlabeled
+    model_version = active_model_version(session)
     if sort_by_score:
         latest_prob = (
             select(Prediction.probability)
             .where(Prediction.content_id == ContentItem.id)
+            .where(Prediction.model_version == model_version)
             .order_by(Prediction.created_at.desc())
             .limit(1)
             .scalar_subquery()
@@ -284,7 +312,7 @@ def list_contents(
     rows = list(session.scalars(query.limit(limit + 1)).all())
     has_more = len(rows) > limit
     page = rows[:limit]
-    items = [content_read(item) for item in page]
+    items = [content_read(item, model_version) for item in page]
     if has_more and page:
         if sort_by_score:
             next_cursor = make_score_cursor(page[-1].id, items[-1].probability)
@@ -297,7 +325,7 @@ def list_contents(
 
 @app.get('/api/v1/contents/{content_id}', response_model=ContentRead)
 def get_content(content_id: str, session: Session = Depends(get_session), _user: User = Depends(require_user)):
-    return content_read(get_content_or_404(session, content_id))
+    return content_read(get_content_or_404(session, content_id), active_model_version(session))
 
 
 @app.get('/api/v1/contents/{content_id}/media/{media_id}')
@@ -322,7 +350,8 @@ def get_media(content_id: str, media_id: str, session: Session = Depends(get_ses
     media_type = mime_by_suffix.get(suffix) or media.mime_type or 'application/octet-stream'
     # Named files may be mislabeled (.gif that is actually JPEG); sniff magic bytes.
     try:
-        header = path.read_bytes()[:16]
+        with path.open('rb') as source:
+            header = source.read(16)
         if header.startswith(b'\xff\xd8\xff'):
             media_type = 'image/jpeg'
         elif header.startswith(b'\x89PNG\r\n\x1a\n'):
@@ -346,7 +375,8 @@ def get_feed(
     if mode not in {'mixed', 'score', 'uncertain', 'newest', 'random'}:
         raise HTTPException(status_code=422, detail='不支持的推荐模式')
     limit = min(max(limit, 1), 50)
-    return [content_read(item) for item in feed_contents(session, limit, mode)]
+    model_version = active_model_version(session)
+    return [content_read(item, model_version) for item in feed_contents(session, limit, mode)]
 
 
 @app.post('/api/v1/contents/{content_id}/label', response_model=LabelResultRead)
@@ -358,9 +388,21 @@ def label_content(
     _: None = Depends(enforce_csrf),
     idempotency_key: str | None = Header(default=None, alias='Idempotency-Key'),
 ):
-    request_hash = request_body_hash(payload.model_dump())
+    request_hash = request_body_hash({
+        'method': 'POST',
+        'path': f'/api/v1/contents/{content_id}/label',
+        'body': payload.model_dump(),
+    })
+    legacy_request_hash = request_body_hash(payload.model_dump())
     if idempotency_key:
-        existing = get_idempotent_response(session, user.id, idempotency_key, request_hash)
+        existing = get_idempotent_response(
+            session,
+            user.id,
+            idempotency_key,
+            request_hash,
+            legacy_request_hash=legacy_request_hash,
+            resource_id=content_id,
+        )
         if existing:
             return LabelResultRead.model_validate(existing.response_body)
     content = get_content_or_404(session, content_id)
@@ -373,13 +415,31 @@ def label_content(
         probability_at_label=payload.probability_at_label,
     )
     maybe_queue_training_snapshot(session)
-    session.commit()
+    session.flush()
+    model_version = active_model_version(session)
     result = LabelResultRead(
-        **content_read(get_content_or_404(session, content_id)).model_dump(),
+        **content_read(get_content_or_404(session, content_id), model_version).model_dump(),
         label_event_id=event.id,
     )
     if idempotency_key:
         save_idempotent_response(session, user.id, idempotency_key, request_hash, 200, result.model_dump(mode='json'))
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        if not idempotency_key:
+            raise
+        existing = get_idempotent_response(
+            session,
+            user.id,
+            idempotency_key,
+            request_hash,
+            legacy_request_hash=legacy_request_hash,
+            resource_id=content_id,
+        )
+        if existing is None:
+            raise
+        return LabelResultRead.model_validate(existing.response_body)
     return result
 
 
@@ -415,18 +475,18 @@ def label_history(
 def undo_label_event(
     event_id: str,
     session: Session = Depends(get_session),
-    _user: User = Depends(require_user),
+    user: User = Depends(require_user),
     _: None = Depends(enforce_csrf),
 ):
     event = session.get(LabelEvent, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail='标签事件不存在')
     try:
-        content = undo_label(session, event)
+        content = undo_label(session, event, user_id=user.id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
-    return content_read(get_content_or_404(session, content.id))
+    return content_read(get_content_or_404(session, content.id), active_model_version(session))
 
 
 @app.get('/api/v1/jobs', response_model=list[JobRead])
@@ -508,6 +568,7 @@ def activate_model(
         row.status = 'archived'
     model.status = 'active'
     model.activated_at = utcnow()
+    queue_missing_predictions_for_model(session, model.version)
     session.commit()
     return model
 
@@ -545,6 +606,7 @@ def rollback_model(
         row.status = 'archived'
     model.status = 'active'
     model.activated_at = utcnow()
+    queue_missing_predictions_for_model(session, model.version)
     session.commit()
     return model
 
@@ -552,9 +614,13 @@ def rollback_model(
 @app.get('/api/v1/training/status', response_model=TrainingStatusRead)
 def training_status(session: Session = Depends(get_session), _user: User = Depends(require_user)):
     latest = session.scalar(select(TrainingSnapshot).order_by(TrainingSnapshot.created_at.desc()))
-    label_query = select(LabelEvent).where(LabelEvent.source == 'explicit_web')
-    if latest:
-        label_query = label_query.where(LabelEvent.created_at > latest.label_cutoff_at)
+    label_query = select(LabelEvent).where(
+        LabelEvent.source == 'explicit_web',
+        ~exists(
+            select(SnapshotLabelEvent.event_id)
+            .where(SnapshotLabelEvent.event_id == LabelEvent.id)
+        ),
+    )
     count = len(session.scalars(label_query).all())
     threshold = get_settings().training_label_threshold
     return TrainingStatusRead(
@@ -597,7 +663,7 @@ def download_training_snapshot(
 @app.post('/api/v1/training/candidates/import', response_model=ModelRead, status_code=201)
 async def import_training_candidate(
     archive: UploadFile = File(...),
-    version: str | None = None,
+    version: str | None = Form(default=None),
     session: Session = Depends(get_session),
     _user: User = Depends(require_user),
     _: None = Depends(enforce_csrf),
@@ -627,6 +693,14 @@ def compare_candidate(model_id: str, session: Session = Depends(get_session), _u
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / 'frontend' / 'dist'
 
 
+def frontend_file(full_path: str) -> Path | None:
+    root = FRONTEND_DIST.resolve()
+    candidate = (root / full_path).resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate if candidate.is_file() else None
+
+
 if FRONTEND_DIST.is_dir():
     app.mount('/assets', StaticFiles(directory=FRONTEND_DIST / 'assets'), name='frontend-assets')
 
@@ -638,7 +712,9 @@ if FRONTEND_DIST.is_dir():
     def spa_fallback(full_path: str, request: Request):
         if full_path.startswith('api/') or full_path.startswith('health'):
             raise HTTPException(status_code=404, detail='Not Found')
-        candidate = FRONTEND_DIST / full_path
-        if candidate.is_file():
+        candidate = frontend_file(full_path)
+        if candidate is None and '..' in Path(full_path).parts:
+            raise HTTPException(status_code=404, detail='Not Found')
+        if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / 'index.html')

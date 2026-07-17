@@ -30,7 +30,15 @@ class ModelManager:
             model = ensure_default_model(session)
         if model is None:
             raise RuntimeError('没有已发布的 active 模型，且 DEFAULT_MODEL_PATH 不可用')
+        return self._load(model, predictor_factory)
 
+    def load_version(self, session: Session, version: str, predictor_factory=None):
+        model = session.scalar(select(ModelVersion).where(ModelVersion.version == version))
+        if model is None:
+            raise RuntimeError(f'模型版本不存在: {version}')
+        return self._load(model, predictor_factory)
+
+    def _load(self, model: ModelVersion, predictor_factory=None):
         model_id = model.id
         if self._predictor is not None and self._model_id == model_id:
             # Keep threshold/temperature in sync with DB without reloading weights.

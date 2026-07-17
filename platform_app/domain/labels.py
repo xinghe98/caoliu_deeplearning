@@ -37,17 +37,29 @@ def apply_label(
     return event
 
 
-def undo_label(session: Session, event: LabelEvent) -> ContentItem:
+def undo_label(session: Session, event: LabelEvent, *, user_id: str | None = None) -> ContentItem:
     content = session.get(ContentItem, event.content_id)
     if content is None:
         raise ValueError('内容不存在')
     latest = latest_label_event(session, content.id)
     if latest is None or latest.id != event.id:
         raise ValueError('只能撤销最新标签事件')
+    if event.source == 'undo':
+        raise ValueError('撤销事件不能再次撤销')
+    restored_label = None
     if event.supersedes_event_id:
         previous = session.get(LabelEvent, event.supersedes_event_id)
-        content.current_label = previous.label if previous else None
-    else:
-        content.current_label = None
-    session.delete(event)
+        restored_label = previous.label if previous and previous.label in (0, 1) else None
+    content.current_label = restored_label
+    session.add(LabelEvent(
+        content_id=content.id,
+        user_id=user_id,
+        # -1 is an audit-only sentinel for restoring the unlabeled state. It is
+        # never copied to ContentItem.current_label or training manifests.
+        label=restored_label if restored_label is not None else -1,
+        source='undo',
+        supersedes_event_id=event.id,
+        model_version=event.model_version,
+        probability_at_label=event.probability_at_label,
+    ))
     return content

@@ -5,6 +5,7 @@ import type {
   ContentRead,
   JobRead,
   JobStats,
+  LabelCreate,
   LabelEventRead,
   LabelResultRead,
   ModelRead,
@@ -43,10 +44,10 @@ export const contentApi = {
     return api<ContentPage>(`/api/v1/contents?${query}`)
   },
   get: (id: string) => api<ContentRead>(`/api/v1/contents/${id}`),
-  label: (id: string, label: 0 | 1, idempotencyKey?: string) =>
+  label: (id: string, payload: LabelCreate, idempotencyKey?: string) =>
     api<LabelResultRead>(`/api/v1/contents/${id}/label`, {
       method: 'POST',
-      json: { label },
+      json: payload,
       idempotencyKey,
     }),
   event: (id: string, event_type: 'view' | 'skip' | 'open_source' | 'copy_magnet' | 'open_magnet') =>

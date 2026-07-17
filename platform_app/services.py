@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import desc, select
+from sqlalchemy import desc, exists, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
@@ -18,7 +18,10 @@ from .domain.keys import (
     validate_magnet_uri,
 )
 from .domain.media import inspect_image, is_under_roots
-from .models import ContentItem, IdempotencyRecord, Job, MediaAsset, ViewEvent, utcnow
+from .models import (
+    ContentItem, IdempotencyRecord, Job, LabelEvent, MediaAsset, ModelVersion,
+    Prediction, SnapshotLabelEvent, ViewEvent, utcnow,
+)
 from .schemas import ContentRead
 
 
@@ -33,8 +36,15 @@ def validate_media_path(raw_path: str, *, inspect: bool = True) -> tuple[Path, d
     return path, meta
 
 
-def content_read(content: ContentItem) -> ContentRead:
-    latest_prediction = max(content.predictions, key=lambda item: item.created_at, default=None)
+def active_model_version(session: Session) -> str | None:
+    return session.scalar(select(ModelVersion.version).where(ModelVersion.status == 'active'))
+
+
+def content_read(content: ContentItem, model_version: str | None) -> ContentRead:
+    latest_prediction = next(
+        (prediction for prediction in content.predictions if prediction.model_version == model_version),
+        None,
+    ) if model_version else None
     return ContentRead(
         id=content.id,
         content_key=content.content_key,
@@ -56,20 +66,49 @@ def content_query():
     return select(ContentItem).options(selectinload(ContentItem.media), selectinload(ContentItem.predictions))
 
 
-def queue_prediction_job(session: Session, content: ContentItem) -> Job:
-    job = Job(job_type='predict', payload={'content_id': content.id})
+def queue_prediction_job(
+    session: Session,
+    content: ContentItem,
+    *,
+    model_version: str | None = None,
+) -> Job:
+    payload = {'content_id': content.id}
+    if model_version is not None:
+        payload['model_version'] = model_version
+    job = Job(job_type='predict', payload=payload)
     session.add(job)
     return job
 
 
-def maybe_queue_training_snapshot(session: Session) -> Job | None:
-    from .models import LabelEvent, TrainingSnapshot
+def queue_missing_predictions_for_model(session: Session, model_version: str) -> int:
+    scored_ids = set(session.scalars(
+        select(Prediction.content_id).where(Prediction.model_version == model_version)
+    ).all())
+    pending_ids = {
+        (job.payload or {}).get('content_id')
+        for job in session.scalars(
+            select(Job).where(Job.job_type == 'predict', Job.status.in_(('pending', 'running')))
+        ).all()
+        if (job.payload or {}).get('model_version') == model_version
+    }
+    contents = session.scalars(
+        content_query().where(ContentItem.status == 'ready')
+    ).all()
+    queued = 0
+    for content in contents:
+        if content.id in scored_ids or content.id in pending_ids or not content.media:
+            continue
+        queue_prediction_job(session, content, model_version=model_version)
+        queued += 1
+    return queued
 
+
+def maybe_queue_training_snapshot(session: Session) -> Job | None:
     settings = get_settings()
-    latest = session.scalar(select(TrainingSnapshot).order_by(TrainingSnapshot.created_at.desc()))
-    query = select(LabelEvent).where(LabelEvent.source == 'explicit_web')
-    if latest:
-        query = query.where(LabelEvent.created_at > latest.label_cutoff_at)
+    query = select(LabelEvent).where(
+        LabelEvent.source == 'explicit_web',
+        ~exists(select(SnapshotLabelEvent.event_id).where(SnapshotLabelEvent.event_id == LabelEvent.id)),
+    )
     count = len(session.scalars(query).all())
     if count < settings.training_label_threshold:
         return None
@@ -132,8 +171,11 @@ def make_score_cursor(content_id: str, probability: float | None) -> str:
     return f'{score:.10f}|{content_id}'
 
 
-def _score(item: ContentItem) -> float:
-    prediction = max(item.predictions, key=lambda value: value.created_at, default=None)
+def _score(item: ContentItem, model_version: str | None) -> float:
+    prediction = next(
+        (value for value in item.predictions if value.model_version == model_version),
+        None,
+    ) if model_version else None
     return prediction.probability if prediction else 0.5
 
 
@@ -149,6 +191,7 @@ def _skipped_content_ids(session: Session) -> set[str]:
 
 
 def feed_contents(session: Session, limit: int, mode: str) -> list[ContentItem]:
+    model_version = active_model_version(session)
     skipped = _skipped_content_ids(session)
     contents = list(session.scalars(
         content_query().where(ContentItem.status == 'ready', ContentItem.current_label.is_(None))
@@ -167,7 +210,7 @@ def feed_contents(session: Session, limit: int, mode: str) -> list[ContentItem]:
         deduped.append(item)
     contents = deduped
 
-    ranked = sorted(contents, key=_score, reverse=True)
+    ranked = sorted(contents, key=lambda item: _score(item, model_version), reverse=True)
     if mode == 'score':
         return ranked[:limit]
     if mode == 'newest':
@@ -176,13 +219,13 @@ def feed_contents(session: Session, limit: int, mode: str) -> list[ContentItem]:
         random.shuffle(contents)
         return contents[:limit]
     if mode == 'uncertain':
-        return sorted(contents, key=lambda value: abs(_score(value) - 0.5))[:limit]
+        return sorted(contents, key=lambda value: abs(_score(value, model_version) - 0.5))[:limit]
 
     recommended_count = max(1, round(limit * get_settings().feed_recommendation_ratio))
     exploration_count = max(0, limit - recommended_count)
     recommended = ranked[:recommended_count]
     remaining = [item for item in contents if item.id not in {value.id for value in recommended}]
-    uncertain = sorted(remaining, key=lambda value: abs(_score(value) - 0.5))[: exploration_count // 2]
+    uncertain = sorted(remaining, key=lambda value: abs(_score(value, model_version) - 0.5))[: exploration_count // 2]
     random_pool = [item for item in remaining if item.id not in {value.id for value in uncertain}]
     random.shuffle(random_pool)
     return (recommended + uncertain + random_pool[: exploration_count - len(uncertain)])[:limit]
@@ -207,13 +250,27 @@ def build_content_key_and_group(payload) -> tuple[str, str, str, str]:
     return key, group, magnet, info_hash
 
 
-def get_idempotent_response(session: Session, user_id: str, key: str, request_hash: str) -> IdempotencyRecord | None:
+def get_idempotent_response(
+    session: Session,
+    user_id: str,
+    key: str,
+    request_hash: str,
+    *,
+    legacy_request_hash: str | None = None,
+    resource_id: str | None = None,
+) -> IdempotencyRecord | None:
     record = session.scalar(
         select(IdempotencyRecord).where(IdempotencyRecord.user_id == user_id, IdempotencyRecord.key == key)
     )
     if record is None:
         return None
-    if record.request_hash != request_hash:
+    legacy_match = (
+        legacy_request_hash is not None
+        and record.request_hash == legacy_request_hash
+        and resource_id is not None
+        and record.response_body.get('id') == resource_id
+    )
+    if record.request_hash != request_hash and not legacy_match:
         raise HTTPException(status_code=409, detail='Idempotency-Key 已用于不同请求')
     return record
 
@@ -234,5 +291,4 @@ def save_idempotent_response(
         response_body=response_body,
     )
     session.add(record)
-    session.commit()
     return record

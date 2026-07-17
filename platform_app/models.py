@@ -143,6 +143,17 @@ class TrainingSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class SnapshotLabelEvent(Base):
+    __tablename__ = 'snapshot_label_events'
+
+    event_id: Mapped[str] = mapped_column(
+        ForeignKey('label_events.id', ondelete='CASCADE'), primary_key=True
+    )
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey('training_snapshots.id', ondelete='CASCADE'), index=True
+    )
+
+
 class Job(Base):
     __tablename__ = 'jobs'
 

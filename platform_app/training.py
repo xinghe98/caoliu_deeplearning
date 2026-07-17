@@ -8,12 +8,12 @@ import zipfile
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
 from .domain.splits import stable_split
-from .models import ContentItem, TrainingSnapshot, utcnow
+from .models import ContentItem, LabelEvent, SnapshotLabelEvent, TrainingSnapshot, utcnow
 
 
 def _manifest_rows(session: Session, include_external: bool = False):
@@ -49,6 +49,21 @@ def _manifest_rows(session: Session, include_external: bool = False):
 
 
 def create_snapshot(session: Session) -> TrainingSnapshot:
+    if session.get_bind().dialect.name != 'sqlite':
+        raise RuntimeError('训练快照目前仅支持 SQLite，以保证标签边界一致性')
+    session.connection().exec_driver_sql('BEGIN IMMEDIATE')
+    cutoff = utcnow()
+    included_event_ids = list(session.scalars(
+        select(LabelEvent.id).where(
+            ~exists(
+                select(SnapshotLabelEvent.event_id)
+                .where(SnapshotLabelEvent.event_id == LabelEvent.id)
+            )
+        )
+    ).all())
+    snapshot = TrainingSnapshot(label_cutoff_at=cutoff)
+    session.add(snapshot)
+    session.flush()
     rows = _manifest_rows(session, include_external=False)
     positive_count = sum(row['label'] == 1 for row in rows)
     negative_count = sum(row['label'] == 0 for row in rows)
@@ -91,15 +106,14 @@ def create_snapshot(session: Session) -> TrainingSnapshot:
         })
     split_bytes = split_manifest_text.getvalue().encode('utf-8-sig')
 
-    snapshot = TrainingSnapshot(
-        label_cutoff_at=utcnow(),
-        sample_count=len(rows),
-        positive_count=positive_count,
-        negative_count=negative_count,
-        manifest_hash=manifest_hash,
-    )
-    session.add(snapshot)
-    session.flush()
+    snapshot.sample_count = len(rows)
+    snapshot.positive_count = positive_count
+    snapshot.negative_count = negative_count
+    snapshot.manifest_hash = manifest_hash
+    session.add_all([
+        SnapshotLabelEvent(event_id=event_id, snapshot_id=snapshot.id)
+        for event_id in included_event_ids
+    ])
     output_dir = get_settings().platform_data_dir / 'training_snapshots'
     output_dir.mkdir(parents=True, exist_ok=True)
     archive_path = output_dir / f'training_snapshot_{snapshot.id}_{manifest_hash[:12]}.zip'

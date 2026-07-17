@@ -641,7 +641,7 @@ python pack_candidate.py `
 | `PLATFORM_DATA_DIR` | `<repo>/platform_data` | 运行时数据根 |
 | `DATABASE_URL` | `sqlite:///<PLATFORM_DATA_DIR>/platform.db` | 数据库 URL |
 | `ALLOWED_MEDIA_ROOTS` | 项目根 | 允许的图片绝对路径根（`;` 分隔） |
-| `INGEST_API_KEY` | 空 | 非空时入库必须带匹配 Header |
+| `INGEST_API_KEY` | 空 | 必填；为空时入库接口返回 503 |
 | `FEED_RECOMMENDATION_RATIO` | `0.8` | mixed 队列推荐占比 |
 | `TRAINING_LABEL_THRESHOLD` | `200` | 自动快照阈值 |
 | `SKIP_COOLDOWN_DAYS` | `7` | 跳过冷却天数 |
@@ -687,7 +687,7 @@ python pack_candidate.py `
 | 跳过 | 否 | `view_events`，默认 7 天不进 feed |
 | 浏览/复制磁力 | 否 | 仅统计 |
 
-修改标签写入新事件并 `supersedes_event_id`；撤销恢复 `current_label`。
+修改标签写入新事件并 `supersedes_event_id`；撤销通过补偿事件恢复 `current_label`，不删除历史。
 
 ### 13.3 Split
 
@@ -751,7 +751,7 @@ python -m pytest --basetemp=.pytest_tmp/run --tb=short
 alembic upgrade head
 ```
 
-- 初始迁移：`alembic/versions/0001_initial.py`  
+- 初始迁移：`alembic/versions/0001_initial.py`；后续迁移：`0002_snapshot_label_events.py`
 - 开发默认可 `AUTO_CREATE_TABLES=true` 自动建表  
 - **生产建议** `AUTO_CREATE_TABLES=false`，只用 Alembic，避免 schema 漂移  
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Clapperboard } from 'lucide-react'
 import { contentApi } from '../api/endpoints'
@@ -14,7 +14,6 @@ function scoreText(item: ContentRead) {
 
 export function ReviewPage() {
   const queryClient = useQueryClient()
-  const [index, setIndex] = useState(0)
   const [imageIndex, setImageIndex] = useState(0)
 
   const feedQuery = useQuery({
@@ -23,7 +22,7 @@ export function ReviewPage() {
   })
 
   const items = feedQuery.data ?? []
-  const current = items[index] ?? null
+  const current = items[0] ?? null
 
   useEffect(() => {
     setImageIndex(0)
@@ -33,10 +32,6 @@ export function ReviewPage() {
     if (!current) return
     void contentApi.event(current.id, 'view').catch(() => undefined)
   }, [current?.id])
-
-  const advance = useCallback(() => {
-    setIndex((value) => value + 1)
-  }, [])
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['feed'] })
@@ -49,20 +44,17 @@ export function ReviewPage() {
     current,
     setImageIndex,
     onLabeled: () => {
-      advance()
       invalidate()
     },
     onSkipped: () => {
-      advance()
       void queryClient.invalidateQueries({ queryKey: ['feed'] })
     },
     onUndo: () => {
-      setIndex(0)
       invalidate()
     },
   })
 
-  const remaining = useMemo(() => Math.max(items.length - index, 0), [items.length, index])
+  const remaining = items.length
 
   if (feedQuery.isLoading) {
     return <div className="page-shell max-w-6xl"><Skeleton /></div>

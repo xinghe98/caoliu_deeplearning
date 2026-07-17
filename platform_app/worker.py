@@ -110,20 +110,28 @@ class PredictionWorker:
         ) or 0)
 
     def process_predict_jobs(self, session, jobs: list[Job]) -> None:
-        model, predictor = self.manager.load_active(session, predictor_factory=self.predictor_factory)
-        self._heartbeat(session, model.version)
         queue_left = self._predict_queue_size(session)
         ok = 0
         fail = 0
         progress = tqdm(
             jobs,
-            desc=f'预测 {model.version}',
+            desc='预测',
             unit='条',
             leave=True,
             dynamic_ncols=True,
         )
         for job in progress:
             try:
+                target_version = (job.payload or {}).get('model_version')
+                if target_version:
+                    model, predictor = self.manager.load_version(
+                        session, target_version, predictor_factory=self.predictor_factory
+                    )
+                else:
+                    model, predictor = self.manager.load_active(
+                        session, predictor_factory=self.predictor_factory
+                    )
+                self._heartbeat(session, model.version)
                 content = session.scalar(
                     select(ContentItem)
                     .options(selectinload(ContentItem.media))

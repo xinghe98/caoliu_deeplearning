@@ -32,6 +32,12 @@ export type LabelResultRead = ContentRead & {
   label_event_id: string
 }
 
+export type LabelCreate = {
+  label: 0 | 1
+  model_version: string | null
+  probability_at_label: number | null
+}
+
 export type SessionRead = {
   username: string
 }
@@ -40,7 +46,7 @@ export type LabelEventRead = {
   id: string
   content_id: string
   user_id: string | null
-  label: number
+  label: -1 | 0 | 1
   source: string
   supersedes_event_id: string | null
   model_version: string | null

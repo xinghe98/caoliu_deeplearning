@@ -35,7 +35,11 @@ export function useContentLabeling({
 
   const labelMutation = useMutation({
     mutationFn: async ({ item, label }: { item: ContentRead; label: 0 | 1 }) => {
-      const updated = await contentApi.label(item.id, label, createIdempotencyKey())
+      const updated = await contentApi.label(item.id, {
+        label,
+        model_version: item.model_version,
+        probability_at_label: item.probability,
+      }, createIdempotencyKey())
       return { updated, eventId: updated.label_event_id, label }
     },
     onSuccess: ({ eventId, label }) => {
@@ -48,8 +52,11 @@ export function useContentLabeling({
         onAction: () => {
           if (!eventId) return
           void labelsApi.undo(eventId).then(() => {
+            setLastEventId(null)
             onUndo?.()
             push({ message: '已撤销标签' })
+          }).catch((err) => {
+            push({ message: err instanceof HttpError ? err.detail : '撤销失败' })
           })
         },
       })
@@ -140,8 +147,11 @@ export function useContentLabeling({
       } else if (event.key.toLowerCase() === 'z' && lastEventId) {
         event.preventDefault()
         void labelsApi.undo(lastEventId).then(() => {
+          setLastEventId(null)
           onUndo?.()
           push({ message: '已撤销标签' })
+        }).catch((err) => {
+          push({ message: err instanceof HttpError ? err.detail : '撤销失败' })
         })
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()

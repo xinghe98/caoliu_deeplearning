@@ -25,8 +25,13 @@ export function LabelsPage() {
   })
 
   const items = history.data ?? []
-  const likes = items.filter((item) => item.label === 1).length
-  const dislikes = items.filter((item) => item.label === 0).length
+  const decisions = items.filter((item) => item.source !== 'undo')
+  const likes = decisions.filter((item) => item.label === 1).length
+  const dislikes = decisions.filter((item) => item.label === 0).length
+  const latestByContent = new Map<string, string>()
+  for (const item of items) {
+    if (!latestByContent.has(item.content_id)) latestByContent.set(item.content_id, item.id)
+  }
 
   return (
     <div className="space-y-7">
@@ -48,7 +53,9 @@ export function LabelsPage() {
             <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-1 py-4 sm:px-3">
               <div>
                 <div className="text-sm font-medium">
-                  {item.label === 1 ? '喜欢' : '不喜欢'}
+                  {item.source === 'undo'
+                    ? item.label === -1 ? '撤销，恢复未标注' : `撤销，恢复${item.label === 1 ? '喜欢' : '不喜欢'}`
+                    : item.label === 1 ? '喜欢' : '不喜欢'}
                   <span className="ml-2 text-muted">· {item.source}</span>
                 </div>
                 <div className="mt-1 text-xs text-muted">
@@ -57,14 +64,16 @@ export function LabelsPage() {
                   {item.probability_at_label != null ? ` · p=${item.probability_at_label.toFixed(3)}` : ''}
                 </div>
               </div>
-              <button
-                type="button"
-                className="quiet-button"
-                disabled={undo.isPending}
-                onClick={() => undo.mutate(item.id)}
-              >
-                撤销
-              </button>
+              {item.source !== 'undo' && latestByContent.get(item.content_id) === item.id ? (
+                <button
+                  type="button"
+                  className="quiet-button"
+                  disabled={undo.isPending}
+                  onClick={() => undo.mutate(item.id)}
+                >
+                  撤销
+                </button>
+              ) : null}
             </div>
           ))}
           {!history.isLoading && items.length === 0 ? (

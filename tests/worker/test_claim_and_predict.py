@@ -65,3 +65,36 @@ def test_only_one_worker_can_claim_a_job(platform_env):
         claimed_b = second._claim_batch(session_b)
     assert len(claimed_a) == 1
     assert claimed_b == []
+
+
+def test_worker_honors_job_model_version_after_activation_changes(platform_env):
+    image = make_image(platform_env['media_root'] / 'versioned.jpg')
+    with SessionLocal() as session:
+        content = ContentItem(
+            content_key='url:versioned-job',
+            content_group_id='versioned-job',
+            title_clean='versioned worker item',
+        )
+        session.add(content)
+        session.flush()
+        session.add(MediaAsset(content_id=content.id, source_path=str(image), ordinal=1, file_size=10))
+        old_path = platform_env['data_dir'] / 'old-worker.pth'
+        new_path = platform_env['data_dir'] / 'new-worker.pth'
+        old_path.write_bytes(b'old')
+        new_path.write_bytes(b'new')
+        session.add_all([
+            ModelVersion(version='worker-old', status='archived', checkpoint_path=str(old_path)),
+            ModelVersion(version='worker-new', status='active', checkpoint_path=str(new_path)),
+        ])
+        session.add(Job(
+            job_type='predict',
+            payload={'content_id': content.id, 'model_version': 'worker-old'},
+        ))
+        session.commit()
+        content_id = content.id
+
+    worker = PredictionWorker(batch_size=8, predictor_factory=FakePredictor)
+    assert worker.run_once() is True
+    with SessionLocal() as session:
+        prediction = session.scalar(select(Prediction).where(Prediction.content_id == content_id))
+        assert prediction.model_version == 'worker-old'
