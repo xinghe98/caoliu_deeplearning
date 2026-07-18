@@ -76,6 +76,8 @@ from .services import (
     queue_missing_predictions_for_model,
     save_idempotent_response,
     validate_media_path,
+    watched_content_ids,
+    watched_exists_clause,
 )
 from .training import create_snapshot
 
@@ -263,6 +265,7 @@ def ingest_content(
 def list_contents(
     label: int | None = None,
     unlabeled: bool = False,
+    watched: bool = False,
     status: str | None = None,
     limit: int = 24,
     cursor: str | None = None,
@@ -270,7 +273,7 @@ def list_contents(
     _user: User = Depends(require_user),
 ):
     limit = min(max(limit, 1), 100)
-    # 全部 / 喜欢 / 不喜欢：按模型概率从高到低；未标注仍按时间
+    # 全部 / 喜欢 / 不喜欢 / 已看过：按模型概率；未标注按时间
     sort_by_score = not unlabeled
     model_version = active_model_version(session)
     if sort_by_score:
@@ -288,8 +291,13 @@ def list_contents(
         score_expr = None
         query = content_query().order_by(ContentItem.created_at.desc(), ContentItem.id.desc())
 
-    if unlabeled:
+    if watched:
+        # Permanent bucket outside like/dislike preference labels.
+        query = query.where(watched_exists_clause())
         query = query.where(ContentItem.current_label.is_(None))
+    elif unlabeled:
+        query = query.where(ContentItem.current_label.is_(None))
+        query = query.where(~watched_exists_clause())
     elif label in (0, 1):
         query = query.where(ContentItem.current_label == label)
     if status:
@@ -312,7 +320,11 @@ def list_contents(
     rows = list(session.scalars(query.limit(limit + 1)).all())
     has_more = len(rows) > limit
     page = rows[:limit]
-    items = [content_read(item, model_version) for item in page]
+    watched_ids = watched_content_ids(session, [item.id for item in page])
+    items = [
+        content_read(item, model_version, is_watched=item.id in watched_ids)
+        for item in page
+    ]
     if has_more and page:
         if sort_by_score:
             next_cursor = make_score_cursor(page[-1].id, items[-1].probability)
@@ -325,7 +337,12 @@ def list_contents(
 
 @app.get('/api/v1/contents/{content_id}', response_model=ContentRead)
 def get_content(content_id: str, session: Session = Depends(get_session), _user: User = Depends(require_user)):
-    return content_read(get_content_or_404(session, content_id), active_model_version(session))
+    content = get_content_or_404(session, content_id)
+    return content_read(
+        content,
+        active_model_version(session),
+        is_watched=content.id in watched_content_ids(session, [content.id]),
+    )
 
 
 @app.get('/api/v1/contents/{content_id}/media/{media_id}')
@@ -376,7 +393,12 @@ def get_feed(
         raise HTTPException(status_code=422, detail='不支持的推荐模式')
     limit = min(max(limit, 1), 50)
     model_version = active_model_version(session)
-    return [content_read(item, model_version) for item in feed_contents(session, limit, mode)]
+    rows = feed_contents(session, limit, mode)
+    watched_ids = watched_content_ids(session, [item.id for item in rows])
+    return [
+        content_read(item, model_version, is_watched=item.id in watched_ids)
+        for item in rows
+    ]
 
 
 @app.post('/api/v1/contents/{content_id}/label', response_model=LabelResultRead)

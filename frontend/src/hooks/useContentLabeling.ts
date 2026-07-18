@@ -12,6 +12,7 @@ type UseContentLabelingOptions = {
   setImageIndex: React.Dispatch<React.SetStateAction<number>>
   onLabeled?: ItemActionCallback
   onSkipped?: ItemActionCallback
+  onWatched?: ItemActionCallback
   onUndo?: () => void | Promise<void>
 }
 
@@ -29,6 +30,7 @@ export function useContentLabeling({
   setImageIndex,
   onLabeled,
   onSkipped,
+  onWatched,
   onUndo,
 }: UseContentLabelingOptions) {
   const { push } = useToast()
@@ -103,7 +105,29 @@ export function useContentLabeling({
     },
   })
 
-  const busy = labelMutation.isPending || skipMutation.isPending
+  const watchedMutation = useMutation({
+    mutationFn: async (item: ContentRead) => {
+      await contentApi.event(item.id, 'watched')
+      return item.id
+    },
+    onSuccess: async (contentId) => {
+      setError('')
+      try {
+        await onWatched?.(contentId)
+      } catch {
+        // Keep unlock path in onSettled even if cache updates fail.
+      }
+      push({ message: '已标记看过（单独归档，不进入喜欢/不喜欢/训练）' })
+    },
+    onError: (err) => {
+      setError(err instanceof HttpError ? err.detail : '标记已看过失败')
+    },
+    onSettled: () => {
+      actionLockRef.current = false
+    },
+  })
+
+  const busy = labelMutation.isPending || skipMutation.isPending || watchedMutation.isPending
 
   const copyMagnet = useCallback(async (item: ContentRead) => {
     if (!item.magnet_uri) {
@@ -144,9 +168,16 @@ export function useContentLabeling({
     skipMutation.mutate(current)
   }, [current, skipMutation])
 
+  const submitWatched = useCallback(() => {
+    if (!current || actionLockRef.current) return
+    actionLockRef.current = true
+    watchedMutation.mutate(current)
+  }, [current, watchedMutation])
+
   const like = useCallback(() => submitLabel(1), [submitLabel])
   const dislike = useCallback(() => submitLabel(0), [submitLabel])
   const skip = useCallback(() => submitSkip(), [submitSkip])
+  const markWatched = useCallback(() => submitWatched(), [submitWatched])
 
   const undoLast = useCallback(() => {
     if (!lastEventId || undoLockRef.current) return
@@ -181,6 +212,9 @@ export function useContentLabeling({
       } else if (event.key === '3') {
         event.preventDefault()
         submitSkip()
+      } else if (event.key === '4') {
+        event.preventDefault()
+        submitWatched()
       } else if (event.key.toLowerCase() === 'm') {
         if (!current) return
         event.preventDefault()
@@ -200,7 +234,7 @@ export function useContentLabeling({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [copyMagnet, current, setImageIndex, submitLabel, submitSkip, undoLast])
+  }, [copyMagnet, current, setImageIndex, submitLabel, submitSkip, submitWatched, undoLast])
 
   return {
     busy,
@@ -208,6 +242,7 @@ export function useContentLabeling({
     like,
     dislike,
     skip,
+    markWatched,
     copyMagnet,
     openMagnet,
   }

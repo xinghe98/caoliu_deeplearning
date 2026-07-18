@@ -11,6 +11,7 @@ type ContentArticleProps = {
   onLike: () => void
   onDislike: () => void
   onSkip: () => void
+  onWatched: () => void
   onCopyMagnet: () => void
   onOpenMagnet: () => void
 }
@@ -24,6 +25,7 @@ export function ContentArticle({
   onLike,
   onDislike,
   onSkip,
+  onWatched,
   onCopyMagnet,
   onOpenMagnet,
 }: ContentArticleProps) {
@@ -45,6 +47,7 @@ export function ContentArticle({
         onLike={onLike}
         onDislike={onDislike}
         onSkip={onSkip}
+        onWatched={onWatched}
         onCopyMagnet={onCopyMagnet}
         onOpenMagnet={onOpenMagnet}
       />

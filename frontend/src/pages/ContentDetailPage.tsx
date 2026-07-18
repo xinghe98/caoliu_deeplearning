@@ -16,6 +16,7 @@ function scoreText(item: ContentRead) {
 function labelText(item: ContentRead) {
   if (item.current_label === 1) return '喜欢'
   if (item.current_label === 0) return '不喜欢'
+  if (item.is_watched) return '已看过'
   return '未标注'
 }
 
@@ -58,11 +59,12 @@ export function ContentDetailPage() {
     invalidateAll()
   }, [invalidateAll, queryClient])
 
-  const { busy, error, like, dislike, skip, copyMagnet, openMagnet } = useContentLabeling({
+  const { busy, error, like, dislike, skip, markWatched, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
     onLabeled: consumeLabeledItem,
     onSkipped: consumeLabeledItem,
+    onWatched: consumeLabeledItem,
     onUndo: invalidateAll,
   })
 
@@ -90,7 +92,7 @@ export function ContentDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl pb-28 md:pb-10">
+    <div className="mx-auto max-w-6xl pb-40 md:pb-10">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-line pb-5">
         <Link to="/library" className="inline-flex min-h-11 items-center gap-1.5 text-sm text-muted hover:text-teal">
           <ArrowLeft size={16} /> 返回内容库
@@ -110,6 +112,7 @@ export function ContentDetailPage() {
         onLike={like}
         onDislike={dislike}
         onSkip={skip}
+        onWatched={markWatched}
         onCopyMagnet={() => void copyMagnet(current)}
         onOpenMagnet={() => void openMagnet(current)}
       />

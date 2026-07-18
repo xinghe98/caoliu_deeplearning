@@ -40,6 +40,7 @@ class ContentRead(BaseModel):
     magnet_uri: str
     status: str
     current_label: int | None
+    is_watched: bool = False
     created_at: datetime
     media: list[MediaRead] = []
     probability: float | None = None
@@ -80,7 +81,7 @@ class LabelEventRead(BaseModel):
 
 
 class EventCreate(BaseModel):
-    event_type: Literal['view', 'skip', 'open_source', 'copy_magnet', 'open_magnet']
+    event_type: Literal['view', 'skip', 'watched', 'open_source', 'copy_magnet', 'open_magnet']
 
 
 class JobRead(BaseModel):

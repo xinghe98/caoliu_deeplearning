@@ -49,11 +49,12 @@ export function ReviewPage() {
     invalidate()
   }, [invalidate, queryClient])
 
-  const { busy, error, like, dislike, skip, copyMagnet, openMagnet } = useContentLabeling({
+  const { busy, error, like, dislike, skip, markWatched, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
     onLabeled: consumeFeedItem,
     onSkipped: consumeFeedItem,
+    onWatched: consumeFeedItem,
     onUndo: invalidate,
   })
 
@@ -90,7 +91,7 @@ export function ReviewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl pb-28 md:pb-10">
+    <div className="mx-auto max-w-6xl pb-40 md:pb-10">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
         <div>
           <div className="eyebrow">今日浏览</div>
@@ -112,6 +113,7 @@ export function ReviewPage() {
         onLike={like}
         onDislike={dislike}
         onSkip={skip}
+        onWatched={markWatched}
         onCopyMagnet={() => void copyMagnet(current)}
         onOpenMagnet={() => void openMagnet(current)}
       />

@@ -11,6 +11,7 @@ const PAGE_SIZE = 24
 function labelText(item: ContentRead) {
   if (item.current_label === 1) return '喜欢'
   if (item.current_label === 0) return '不喜欢'
+  if (item.is_watched) return '已看过'
   return '未标注'
 }
 
@@ -26,7 +27,7 @@ function crawledAtText(createdAt: string) {
 }
 
 export function LibraryPage() {
-  const [label, setLabel] = useState<'all' | '1' | '0' | 'unlabeled'>('all')
+  const [label, setLabel] = useState<'all' | '1' | '0' | 'unlabeled' | 'watched'>('all')
   const [showTop, setShowTop] = useState(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
@@ -37,6 +38,7 @@ export function LibraryPage() {
       if (label === '1') return contentApi.list({ label: 1, limit: PAGE_SIZE, cursor: pageParam })
       if (label === '0') return contentApi.list({ label: 0, limit: PAGE_SIZE, cursor: pageParam })
       if (label === 'unlabeled') return contentApi.list({ unlabeled: true, limit: PAGE_SIZE, cursor: pageParam })
+      if (label === 'watched') return contentApi.list({ watched: true, limit: PAGE_SIZE, cursor: pageParam })
       return contentApi.list({ limit: PAGE_SIZE, cursor: pageParam })
     },
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
@@ -91,6 +93,7 @@ export function LibraryPage() {
             ['all', '全部'],
             ['1', '喜欢'],
             ['0', '不喜欢'],
+            ['watched', '已看过'],
             ['unlabeled', '未标注'],
           ].map(([value, text]) => (
             <button
@@ -146,7 +149,7 @@ export function LibraryPage() {
                   {item.title_clean || '无标题'}
                 </h2>
                 <div className="flex items-center justify-between gap-2 text-xs text-muted">
-                  <span className={`truncate ${item.current_label === 1 ? 'text-like' : item.current_label === 0 ? 'text-dislike' : ''}`}>{labelText(item)}</span>
+                  <span className={`truncate ${item.current_label === 1 ? 'text-like' : item.current_label === 0 ? 'text-dislike' : item.is_watched ? 'text-teal' : ''}`}>{labelText(item)}</span>
                   <span className="shrink-0 tabular-nums">{scoreText(item)}</span>
                 </div>
                 <p className="truncate text-xs text-muted" title={new Date(item.created_at).toLocaleString('zh-CN')}>

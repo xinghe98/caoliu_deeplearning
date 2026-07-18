@@ -30,13 +30,15 @@ export const contentApi = {
     params: {
       label?: number | null
       unlabeled?: boolean
+      watched?: boolean
       status?: string
       limit?: number
       cursor?: string | null
     } = {},
   ) => {
     const query = new URLSearchParams()
-    if (params.unlabeled) query.set('unlabeled', 'true')
+    if (params.watched) query.set('watched', 'true')
+    else if (params.unlabeled) query.set('unlabeled', 'true')
     else if (params.label === 0 || params.label === 1) query.set('label', String(params.label))
     if (params.status) query.set('status', params.status)
     if (params.cursor) query.set('cursor', params.cursor)
@@ -50,7 +52,10 @@ export const contentApi = {
       json: payload,
       idempotencyKey,
     }),
-  event: (id: string, event_type: 'view' | 'skip' | 'open_source' | 'copy_magnet' | 'open_magnet') =>
+  event: (
+    id: string,
+    event_type: 'view' | 'skip' | 'watched' | 'open_source' | 'copy_magnet' | 'open_magnet',
+  ) =>
     api<void>(`/api/v1/contents/${id}/events`, { method: 'POST', json: { event_type } }),
 }
 

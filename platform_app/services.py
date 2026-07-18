@@ -40,7 +40,12 @@ def active_model_version(session: Session) -> str | None:
     return session.scalar(select(ModelVersion.version).where(ModelVersion.status == 'active'))
 
 
-def content_read(content: ContentItem, model_version: str | None) -> ContentRead:
+def content_read(
+    content: ContentItem,
+    model_version: str | None,
+    *,
+    is_watched: bool = False,
+) -> ContentRead:
     latest_prediction = next(
         (prediction for prediction in content.predictions if prediction.model_version == model_version),
         None,
@@ -53,6 +58,7 @@ def content_read(content: ContentItem, model_version: str | None) -> ContentRead
         magnet_uri=content.magnet_uri,
         status=content.status,
         current_label=content.current_label,
+        is_watched=is_watched,
         created_at=content.created_at,
         media=[media for media in sorted(content.media, key=lambda item: item.ordinal)],
         probability=latest_prediction.probability if latest_prediction else None,
@@ -190,13 +196,32 @@ def _skipped_content_ids(session: Session) -> set[str]:
     return set(rows)
 
 
+def watched_content_ids(session: Session, content_ids: list[str] | None = None) -> set[str]:
+    query = select(ViewEvent.content_id).where(ViewEvent.event_type == 'watched').distinct()
+    if content_ids is not None:
+        if not content_ids:
+            return set()
+        query = query.where(ViewEvent.content_id.in_(content_ids))
+    return set(session.scalars(query).all())
+
+
+def watched_exists_clause():
+    return exists(
+        select(ViewEvent.id).where(
+            ViewEvent.content_id == ContentItem.id,
+            ViewEvent.event_type == 'watched',
+        )
+    )
+
+
 def feed_contents(session: Session, limit: int, mode: str) -> list[ContentItem]:
     model_version = active_model_version(session)
     skipped = _skipped_content_ids(session)
+    watched = watched_content_ids(session)
     contents = list(session.scalars(
         content_query().where(ContentItem.status == 'ready', ContentItem.current_label.is_(None))
     ).all())
-    contents = [item for item in contents if item.id not in skipped]
+    contents = [item for item in contents if item.id not in skipped and item.id not in watched]
     if not contents:
         return []
 

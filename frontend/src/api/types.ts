@@ -15,6 +15,7 @@ export type ContentRead = {
   magnet_uri: string
   status: string
   current_label: number | null
+  is_watched: boolean
   created_at: string
   media: MediaRead[]
   probability: number | null
