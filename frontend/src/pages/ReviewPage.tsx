@@ -33,21 +33,27 @@ export function ReviewPage() {
     void contentApi.event(current.id, 'view').catch(() => undefined)
   }, [current?.id])
 
-  const invalidate = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['feed'] })
+  const invalidateSideData = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['labels'] })
     void queryClient.invalidateQueries({ queryKey: ['contents'] })
     void queryClient.invalidateQueries({ queryKey: ['training-status'] })
   }, [queryClient])
 
+  const reloadFeed = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['feed'] })
+    invalidateSideData()
+  }, [invalidateSideData, queryClient])
+
   const consumeFeedItem = useCallback(async (contentId: ContentRead['id']) => {
+    // Keep the current 20-item batch stable: only drop the acted item.
+    // Do not refetch feed here, or "本批还有 N 条" jumps back to 20.
     await queryClient.cancelQueries({ queryKey: ['feed'] })
     queryClient.setQueriesData<ContentRead[]>(
       { queryKey: ['feed'] },
       (cached) => cached?.filter((item) => item.id !== contentId),
     )
-    invalidate()
-  }, [invalidate, queryClient])
+    invalidateSideData()
+  }, [invalidateSideData, queryClient])
 
   const { busy, error, like, dislike, skip, markWatched, copyMagnet, openMagnet } = useContentLabeling({
     current,
@@ -55,7 +61,7 @@ export function ReviewPage() {
     onLabeled: consumeFeedItem,
     onSkipped: consumeFeedItem,
     onWatched: consumeFeedItem,
-    onUndo: invalidate,
+    onUndo: reloadFeed,
   })
 
   const remaining = items.length
@@ -82,7 +88,7 @@ export function ReviewPage() {
         <button
           type="button"
           className="quiet-button mt-6"
-          onClick={() => void feedQuery.refetch()}
+          onClick={() => reloadFeed()}
         >
           刷新队列
         </button>
