@@ -30,6 +30,30 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _bootstrap_legacy_stamp(connection) -> None:
+    """Stamp create_all databases that predate Alembic version tracking."""
+    tables = set(inspect(connection).get_table_names())
+    if 'content_items' not in tables or 'alembic_version' in tables:
+        return
+
+    content_columns = {
+        column['name'] for column in inspect(connection).get_columns('content_items')
+    }
+    if 'label_version' in content_columns and 'snapshot_label_events' in tables:
+        stamp = '0003_content_label_version'
+    elif 'snapshot_label_events' in tables:
+        stamp = '0002_snapshot_label_events'
+    else:
+        stamp = '0001_initial'
+
+    connection.execute(text(
+        'CREATE TABLE alembic_version '
+        '(version_num VARCHAR(32) NOT NULL PRIMARY KEY)'
+    ))
+    connection.execute(text(
+        f"INSERT INTO alembic_version (version_num) VALUES ('{stamp}')"
+    ))
+
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
     configuration['sqlalchemy.url'] = get_url()
@@ -39,19 +63,8 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        tables = set(inspect(connection).get_table_names())
-        # Early releases used create_all and therefore have no Alembic stamp.
-        # Their schema matches 0001, so stamp that baseline before applying upgrades.
-        if 'content_items' in tables and 'alembic_version' not in tables:
-            connection.execute(text(
-                'CREATE TABLE alembic_version '
-                '(version_num VARCHAR(32) NOT NULL PRIMARY KEY)'
-            ))
-            connection.execute(text(
-                "INSERT INTO alembic_version (version_num) VALUES ('0001_initial')"
-            ))
-            connection.commit()
-        elif connection.in_transaction():
+        _bootstrap_legacy_stamp(connection)
+        if connection.in_transaction():
             connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
         with context.begin_transaction():

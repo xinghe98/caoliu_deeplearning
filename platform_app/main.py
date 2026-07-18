@@ -5,7 +5,7 @@ import secrets
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import exists, func, inspect, select, text
+from sqlalchemy import exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,7 @@ from .auth import (
 )
 from .candidates import import_candidate
 from .config import get_settings
-from .database import Base, configure_engine, get_engine, get_session
+from .database import configure_engine, get_session
 from .domain.labels import LabelConflictError, apply_label, undo_label
 from .models import (
     AuthSession,
@@ -82,34 +82,23 @@ from .services import (
 from .training import create_snapshot
 
 
+def _run_startup_migrations() -> None:
+    from alembic import command
+    from alembic.config import Config
+
+    root = Path(__file__).resolve().parents[1]
+    command.upgrade(Config(str(root / 'alembic.ini')), 'head')
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_engine()
-    engine = get_engine()
-    membership_table_existed = inspect(engine).has_table('snapshot_label_events')
     if get_settings().auto_create_tables:
-        Base.metadata.create_all(bind=engine)
+        _run_startup_migrations()
     from .database import SessionLocal
     from .default_model import ensure_default_model
 
     with SessionLocal() as session:
-        if get_settings().auto_create_tables and not membership_table_existed:
-            session.execute(text("""
-                INSERT INTO snapshot_label_events (event_id, snapshot_id)
-                SELECT label_events.id, (
-                    SELECT training_snapshots.id
-                    FROM training_snapshots
-                    WHERE training_snapshots.label_cutoff_at >= label_events.created_at
-                    ORDER BY training_snapshots.label_cutoff_at ASC
-                    LIMIT 1
-                )
-                FROM label_events
-                WHERE EXISTS (
-                    SELECT 1 FROM training_snapshots
-                    WHERE training_snapshots.label_cutoff_at >= label_events.created_at
-                )
-            """))
-            session.commit()
         ensure_default_model(session)
     yield
 

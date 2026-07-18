@@ -36,6 +36,7 @@ def test_alembic_bootstraps_an_unstamped_create_all_database(tmp_path, monkeypat
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
         connection.execute(text('DROP TABLE snapshot_label_events'))
+        connection.execute(text('ALTER TABLE content_items DROP COLUMN label_version'))
     engine.dispose()
 
     monkeypatch.setenv('DATABASE_URL', url)
@@ -51,6 +52,33 @@ def test_alembic_bootstraps_an_unstamped_create_all_database(tmp_path, monkeypat
             assert version == '0003_content_label_version'
             content_columns = {column['name'] for column in schema.get_columns('content_items')}
             assert 'label_version' in content_columns
+        finally:
+            migrated.dispose()
+    finally:
+        clear_settings_cache()
+
+
+def test_alembic_bootstraps_create_all_db_missing_only_label_version(tmp_path, monkeypatch):
+    database = tmp_path / 'missing-label-version.db'
+    url = f'sqlite:///{database.as_posix()}'
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text('ALTER TABLE content_items DROP COLUMN label_version'))
+    engine.dispose()
+
+    monkeypatch.setenv('DATABASE_URL', url)
+    clear_settings_cache()
+    try:
+        command.upgrade(Config('alembic.ini'), 'head')
+        migrated = create_engine(url)
+        try:
+            schema = inspect(migrated)
+            content_columns = {column['name'] for column in schema.get_columns('content_items')}
+            assert 'label_version' in content_columns
+            with migrated.connect() as connection:
+                version = connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
+            assert version == '0003_content_label_version'
         finally:
             migrated.dispose()
     finally:
