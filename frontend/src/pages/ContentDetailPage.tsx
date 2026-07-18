@@ -49,11 +49,20 @@ export function ContentDetailPage() {
     void queryClient.invalidateQueries({ queryKey: ['training-status'] })
   }, [contentId, queryClient])
 
+  const consumeLabeledItem = useCallback(async (labeledId: ContentRead['id']) => {
+    await queryClient.cancelQueries({ queryKey: ['feed'] })
+    queryClient.setQueriesData<ContentRead[]>(
+      { queryKey: ['feed'] },
+      (cached) => cached?.filter((item) => item.id !== labeledId),
+    )
+    invalidateAll()
+  }, [invalidateAll, queryClient])
+
   const { busy, error, like, dislike, skip, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
-    onLabeled: invalidateAll,
-    onSkipped: invalidateAll,
+    onLabeled: consumeLabeledItem,
+    onSkipped: consumeLabeledItem,
     onUndo: invalidateAll,
   })
 

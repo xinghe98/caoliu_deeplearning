@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { contentApi, labelsApi } from '../api/endpoints'
 import { copyText, HttpError } from '../api/client'
 import type { ContentRead } from '../api/types'
 import { useToast } from '../components/Toast'
 
+type ItemActionCallback = (contentId: ContentRead['id']) => void | Promise<void>
+
 type UseContentLabelingOptions = {
   current: ContentRead | null
   setImageIndex: React.Dispatch<React.SetStateAction<number>>
-  onLabeled?: () => void
-  onSkipped?: () => void
-  onUndo?: () => void
+  onLabeled?: ItemActionCallback
+  onSkipped?: ItemActionCallback
+  onUndo?: () => void | Promise<void>
 }
 
 // crypto.randomUUID() is unavailable in some browsers on an HTTP LAN origin.
@@ -32,6 +34,8 @@ export function useContentLabeling({
   const { push } = useToast()
   const [error, setError] = useState('')
   const [lastEventId, setLastEventId] = useState<string | null>(null)
+  const actionLockRef = useRef(false)
+  const undoLockRef = useRef(false)
 
   const labelMutation = useMutation({
     mutationFn: async ({ item, label }: { item: ContentRead; label: 0 | 1 }) => {
@@ -42,27 +46,38 @@ export function useContentLabeling({
       }, createIdempotencyKey())
       return { updated, eventId: updated.label_event_id, label }
     },
-    onSuccess: ({ eventId, label }) => {
+    onSuccess: async ({ updated, eventId, label }) => {
       setLastEventId(eventId)
       setError('')
-      onLabeled?.()
+      try {
+        await onLabeled?.(updated.id)
+      } catch {
+        // Server already committed; keep UI unlocked and avoid masking success.
+      }
       push({
         message: label === 1 ? '已标记喜欢' : '已标记不喜欢',
         actionLabel: '撤销',
         onAction: () => {
-          if (!eventId) return
+          if (!eventId || undoLockRef.current) return
+          undoLockRef.current = true
           void labelsApi.undo(eventId).then(() => {
             setLastEventId(null)
-            onUndo?.()
+            return onUndo?.()
+          }).then(() => {
             push({ message: '已撤销标签' })
           }).catch((err) => {
             push({ message: err instanceof HttpError ? err.detail : '撤销失败' })
+          }).finally(() => {
+            undoLockRef.current = false
           })
         },
       })
     },
     onError: (err) => {
       setError(err instanceof HttpError ? err.detail : '标注失败')
+    },
+    onSettled: () => {
+      actionLockRef.current = false
     },
   })
 
@@ -71,13 +86,20 @@ export function useContentLabeling({
       await contentApi.event(item.id, 'skip')
       return item.id
     },
-    onSuccess: () => {
+    onSuccess: async (contentId) => {
       setError('')
-      onSkipped?.()
+      try {
+        await onSkipped?.(contentId)
+      } catch {
+        // Keep unlock path in onSettled even if cache updates fail.
+      }
       push({ message: '已跳过（7 天冷却，不进入训练）' })
     },
     onError: (err) => {
       setError(err instanceof HttpError ? err.detail : '跳过失败')
+    },
+    onSettled: () => {
+      actionLockRef.current = false
     },
   })
 
@@ -110,20 +132,38 @@ export function useContentLabeling({
     }
   }, [push])
 
-  const like = useCallback(() => {
-    if (!current || busy) return
-    labelMutation.mutate({ item: current, label: 1 })
-  }, [busy, current, labelMutation])
+  const submitLabel = useCallback((label: 0 | 1) => {
+    if (!current || actionLockRef.current) return
+    actionLockRef.current = true
+    labelMutation.mutate({ item: current, label })
+  }, [current, labelMutation])
 
-  const dislike = useCallback(() => {
-    if (!current || busy) return
-    labelMutation.mutate({ item: current, label: 0 })
-  }, [busy, current, labelMutation])
-
-  const skip = useCallback(() => {
-    if (!current || busy) return
+  const submitSkip = useCallback(() => {
+    if (!current || actionLockRef.current) return
+    actionLockRef.current = true
     skipMutation.mutate(current)
-  }, [busy, current, skipMutation])
+  }, [current, skipMutation])
+
+  const like = useCallback(() => submitLabel(1), [submitLabel])
+  const dislike = useCallback(() => submitLabel(0), [submitLabel])
+  const skip = useCallback(() => submitSkip(), [submitSkip])
+
+  const undoLast = useCallback(() => {
+    if (!lastEventId || undoLockRef.current) return
+    undoLockRef.current = true
+    const eventId = lastEventId
+    setLastEventId(null)
+    void labelsApi.undo(eventId).then(() => {
+      return onUndo?.()
+    }).then(() => {
+      push({ message: '已撤销标签' })
+    }).catch((err) => {
+      setLastEventId(eventId)
+      push({ message: err instanceof HttpError ? err.detail : '撤销失败' })
+    }).finally(() => {
+      undoLockRef.current = false
+    })
+  }, [lastEventId, onUndo, push])
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -131,39 +171,36 @@ export function useContentLabeling({
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
       }
-      if (!current || busy) return
+      if (event.repeat) return
       if (event.key === '1') {
         event.preventDefault()
-        labelMutation.mutate({ item: current, label: 1 })
+        submitLabel(1)
       } else if (event.key === '2') {
         event.preventDefault()
-        labelMutation.mutate({ item: current, label: 0 })
+        submitLabel(0)
       } else if (event.key === '3') {
         event.preventDefault()
-        skipMutation.mutate(current)
+        submitSkip()
       } else if (event.key.toLowerCase() === 'm') {
+        if (!current) return
         event.preventDefault()
         void copyMagnet(current)
-      } else if (event.key.toLowerCase() === 'z' && lastEventId) {
+      } else if (event.key.toLowerCase() === 'z') {
         event.preventDefault()
-        void labelsApi.undo(lastEventId).then(() => {
-          setLastEventId(null)
-          onUndo?.()
-          push({ message: '已撤销标签' })
-        }).catch((err) => {
-          push({ message: err instanceof HttpError ? err.detail : '撤销失败' })
-        })
+        undoLast()
       } else if (event.key === 'ArrowLeft') {
+        if (!current) return
         event.preventDefault()
         setImageIndex((value) => Math.max(0, value - 1))
       } else if (event.key === 'ArrowRight') {
+        if (!current) return
         event.preventDefault()
         setImageIndex((value) => Math.min((current.media.length || 1) - 1, value + 1))
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [busy, copyMagnet, current, labelMutation, lastEventId, onUndo, push, setImageIndex, skipMutation])
+  }, [copyMagnet, current, setImageIndex, submitLabel, submitSkip, undoLast])
 
   return {
     busy,

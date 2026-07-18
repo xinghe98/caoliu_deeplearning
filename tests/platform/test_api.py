@@ -1,5 +1,6 @@
 import io
 import json
+import threading
 import zipfile
 from pathlib import Path
 
@@ -7,7 +8,9 @@ import torch
 from sqlalchemy import delete, select
 
 from platform_app.database import SessionLocal
-from platform_app.models import Job, LabelEvent, ModelVersion, Prediction
+from platform_app.domain.labels import LabelConflictError, apply_label
+from platform_app.models import ContentItem, Job, LabelEvent, ModelVersion, Prediction
+from platform_app.training import create_snapshot
 from tests.conftest import make_image
 
 
@@ -238,6 +241,186 @@ def test_contents_cursor_pagination(auth_client, platform_env):
     assert len(body2['items']) == 2
     ids = {item['id'] for item in body['items']} | {item['id'] for item in body2['items']}
     assert len(ids) == 4
+
+
+def test_label_version_cas_rejects_stale_update(auth_client, platform_env):
+    from sqlalchemy import update
+
+    image = make_image(platform_env['media_root'] / 'cas.jpg')
+    content_id = auth_client.post(
+        '/api/v1/ingest/content',
+        headers={'X-Ingest-Key': 'test-ingest-key'},
+        json={
+            'content_key': 'url:cas-label',
+            'source_url': 'https://example.com/cas-label',
+            'title_clean': 'cas',
+            'media': [{'source_path': str(image), 'ordinal': 1}],
+        },
+    ).json()['content_id']
+
+    assert auth_client.post(f'/api/v1/contents/{content_id}/label', json={'label': 1}).status_code == 200
+
+    with SessionLocal() as session:
+        stale = session.execute(
+            update(ContentItem)
+            .where(ContentItem.id == content_id, ContentItem.label_version == 0)
+            .values(current_label=0, label_version=1)
+        )
+        assert stale.rowcount == 0
+
+        content = session.get(ContentItem, content_id)
+        event = apply_label(session, content, 0)
+        session.commit()
+        assert content.current_label == 0
+        assert content.label_version == 2
+        assert event.supersedes_event_id is not None
+
+    with SessionLocal() as session:
+        events = session.scalars(
+            select(LabelEvent)
+            .where(LabelEvent.content_id == content_id)
+            .order_by(LabelEvent.created_at, LabelEvent.id)
+        ).all()
+        assert len(events) == 2
+        assert events[0].label == 1
+        assert events[1].label == 0
+        assert events[1].supersedes_event_id == events[0].id
+        content = session.get(ContentItem, content_id)
+        assert content.current_label == 0
+        assert content.label_version == 2
+
+
+def test_parallel_labels_keep_single_event_chain(auth_client, platform_env):
+    image = make_image(platform_env['media_root'] / 'parallel.jpg')
+    content_id = auth_client.post(
+        '/api/v1/ingest/content',
+        headers={'X-Ingest-Key': 'test-ingest-key'},
+        json={
+            'content_key': 'url:parallel-label',
+            'source_url': 'https://example.com/parallel-label',
+            'title_clean': 'parallel',
+            'media': [{'source_path': str(image), 'ordinal': 1}],
+        },
+    ).json()['content_id']
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def worker(label: int) -> None:
+        with SessionLocal() as session:
+            content = session.get(ContentItem, content_id)
+            barrier.wait(timeout=5)
+            try:
+                apply_label(session, content, label)
+                session.commit()
+                with lock:
+                    outcomes.append('ok')
+            except LabelConflictError:
+                session.rollback()
+                with lock:
+                    outcomes.append('conflict')
+            except Exception:
+                session.rollback()
+                with lock:
+                    outcomes.append('error')
+
+    threads = [
+        threading.Thread(target=worker, args=(1,)),
+        threading.Thread(target=worker, args=(0,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert 'error' not in outcomes
+    assert outcomes.count('ok') >= 1
+
+    with SessionLocal() as session:
+        events = session.scalars(
+            select(LabelEvent)
+            .where(LabelEvent.content_id == content_id)
+            .order_by(LabelEvent.created_at, LabelEvent.id)
+        ).all()
+        assert len(events) == outcomes.count('ok')
+        roots = [event for event in events if event.supersedes_event_id is None]
+        assert len(roots) == 1
+        content = session.get(ContentItem, content_id)
+        assert content.current_label in (0, 1)
+        assert content.label_version == len(events)
+
+
+def test_label_while_snapshot_zip_builds(auth_client, platform_env, monkeypatch):
+    pos = make_image(platform_env['media_root'] / 'snap_pos.jpg', color=(200, 20, 20))
+    neg = make_image(platform_env['media_root'] / 'snap_neg.jpg', color=(20, 20, 200))
+    extra = make_image(platform_env['media_root'] / 'snap_extra.jpg', color=(20, 200, 20))
+    labeled_ids = []
+    for key, image, label in [
+        ('f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', pos, 1),
+        ('f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2', neg, 0),
+    ]:
+        content_id = auth_client.post(
+            '/api/v1/ingest/content',
+            json={
+                'content_key': f'btih:{key}',
+                'title_clean': key,
+                'magnet_uri': f'magnet:?xt=urn:btih:{key}',
+                'info_hash': key,
+                'media': [{'source_path': str(image), 'ordinal': 1}],
+            },
+            headers={'X-Ingest-Key': 'test-ingest-key'},
+        ).json()['content_id']
+        auth_client.post(f'/api/v1/contents/{content_id}/label', json={'label': label})
+        labeled_ids.append(content_id)
+
+    extra_id = auth_client.post(
+        '/api/v1/ingest/content',
+        json={
+            'content_key': 'btih:f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3',
+            'title_clean': 'extra',
+            'magnet_uri': 'magnet:?xt=urn:btih:f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3',
+            'info_hash': 'f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3',
+            'media': [{'source_path': str(extra), 'ordinal': 1}],
+        },
+        headers={'X-Ingest-Key': 'test-ingest-key'},
+    ).json()['content_id']
+
+    release_zip = threading.Event()
+    label_done = threading.Event()
+    original_write = __import__('platform_app.training', fromlist=['_write_snapshot_archive'])._write_snapshot_archive
+
+    def slow_write(**kwargs):
+        label_done.wait(timeout=5)
+        release_zip.set()
+        return original_write(**kwargs)
+
+    monkeypatch.setattr('platform_app.training._write_snapshot_archive', slow_write)
+
+    errors = []
+
+    def run_snapshot():
+        try:
+            with SessionLocal() as session:
+                create_snapshot(session)
+        except Exception as exc:  # pragma: no cover - surfaced via errors list
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_snapshot)
+    worker.start()
+    # Give phase-1 commit a moment, then label while ZIP would still be held open previously.
+    threading.Event().wait(0.2)
+    labeled = auth_client.post(f'/api/v1/contents/{extra_id}/label', json={'label': 1})
+    assert labeled.status_code == 200, labeled.text
+    label_done.set()
+    worker.join(timeout=10)
+    assert not worker.is_alive()
+    assert errors == []
+
+    with SessionLocal() as session:
+        content = session.get(ContentItem, extra_id)
+        assert content is not None
+        assert content.current_label == 1
 
 
 def test_idempotency_key_is_scoped_to_content(auth_client, platform_env):

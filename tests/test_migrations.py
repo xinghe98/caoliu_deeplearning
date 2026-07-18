@@ -18,6 +18,11 @@ def test_alembic_upgrade_creates_snapshot_event_membership(tmp_path, monkeypatch
             assert 'snapshot_label_events' in schema.get_table_names()
             columns = {column['name'] for column in schema.get_columns('snapshot_label_events')}
             assert columns == {'event_id', 'snapshot_id'}
+            content_columns = {column['name'] for column in schema.get_columns('content_items')}
+            assert 'label_version' in content_columns
+            with engine.connect() as connection:
+                version = connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
+            assert version == '0003_content_label_version'
         finally:
             engine.dispose()
     finally:
@@ -43,7 +48,9 @@ def test_alembic_bootstraps_an_unstamped_create_all_database(tmp_path, monkeypat
             assert 'snapshot_label_events' in schema.get_table_names()
             with migrated.connect() as connection:
                 version = connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
-            assert version == '0002_snapshot_label_events'
+            assert version == '0003_content_label_version'
+            content_columns = {column['name'] for column in schema.get_columns('content_items')}
+            assert 'label_version' in content_columns
         finally:
             migrated.dispose()
     finally:

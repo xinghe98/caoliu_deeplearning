@@ -24,7 +24,7 @@ from .auth import (
 from .candidates import import_candidate
 from .config import get_settings
 from .database import Base, configure_engine, get_engine, get_session
-from .domain.labels import apply_label, undo_label
+from .domain.labels import LabelConflictError, apply_label, undo_label
 from .models import (
     AuthSession,
     ContentItem,
@@ -406,14 +406,18 @@ def label_content(
         if existing:
             return LabelResultRead.model_validate(existing.response_body)
     content = get_content_or_404(session, content_id)
-    event = apply_label(
-        session,
-        content,
-        payload.label,
-        user_id=user.id,
-        model_version=payload.model_version,
-        probability_at_label=payload.probability_at_label,
-    )
+    try:
+        event = apply_label(
+            session,
+            content,
+            payload.label,
+            user_id=user.id,
+            model_version=payload.model_version,
+            probability_at_label=payload.probability_at_label,
+        )
+    except LabelConflictError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     maybe_queue_training_snapshot(session)
     session.flush()
     model_version = active_model_version(session)
@@ -483,6 +487,9 @@ def undo_label_event(
         raise HTTPException(status_code=404, detail='标签事件不存在')
     try:
         content = undo_label(session, event, user_id=user.id)
+    except LabelConflictError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()

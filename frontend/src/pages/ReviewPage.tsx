@@ -40,18 +40,21 @@ export function ReviewPage() {
     void queryClient.invalidateQueries({ queryKey: ['training-status'] })
   }, [queryClient])
 
+  const consumeFeedItem = useCallback(async (contentId: ContentRead['id']) => {
+    await queryClient.cancelQueries({ queryKey: ['feed'] })
+    queryClient.setQueriesData<ContentRead[]>(
+      { queryKey: ['feed'] },
+      (cached) => cached?.filter((item) => item.id !== contentId),
+    )
+    invalidate()
+  }, [invalidate, queryClient])
+
   const { busy, error, like, dislike, skip, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
-    onLabeled: () => {
-      invalidate()
-    },
-    onSkipped: () => {
-      void queryClient.invalidateQueries({ queryKey: ['feed'] })
-    },
-    onUndo: () => {
-      invalidate()
-    },
+    onLabeled: consumeFeedItem,
+    onSkipped: consumeFeedItem,
+    onUndo: invalidate,
   })
 
   const remaining = items.length

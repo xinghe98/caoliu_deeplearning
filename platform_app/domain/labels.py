@@ -1,7 +1,11 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ..models import ContentItem, LabelEvent, User
+from ..models import ContentItem, LabelEvent, utcnow
+
+
+class LabelConflictError(ValueError):
+    """Raised when another writer updated the content label first."""
 
 
 def latest_label_event(session: Session, content_id: str) -> LabelEvent | None:
@@ -22,6 +26,13 @@ def apply_label(
     model_version: str | None = None,
     probability_at_label: float | None = None,
 ) -> LabelEvent:
+    # Re-read version inside the write transaction for optimistic concurrency.
+    expected_version = session.scalar(
+        select(ContentItem.label_version).where(ContentItem.id == content.id)
+    )
+    if expected_version is None:
+        raise ValueError('内容不存在')
+
     previous = latest_label_event(session, content.id)
     event = LabelEvent(
         content_id=content.id,
@@ -33,7 +44,26 @@ def apply_label(
         probability_at_label=probability_at_label,
     )
     session.add(event)
-    content.current_label = label
+    session.flush()
+
+    result = session.execute(
+        update(ContentItem)
+        .where(
+            ContentItem.id == content.id,
+            ContentItem.label_version == expected_version,
+        )
+        .values(
+            current_label=label,
+            label_version=expected_version + 1,
+            updated_at=utcnow(),
+        )
+    )
+    if result.rowcount != 1:
+        raise LabelConflictError('内容标签已被其他操作更新，请刷新后重试')
+
+    session.refresh(content)
+    if content.label_version != expected_version + 1 or content.current_label != label:
+        raise LabelConflictError('内容标签已被其他操作更新，请刷新后重试')
     return event
 
 
@@ -46,11 +76,18 @@ def undo_label(session: Session, event: LabelEvent, *, user_id: str | None = Non
         raise ValueError('只能撤销最新标签事件')
     if event.source == 'undo':
         raise ValueError('撤销事件不能再次撤销')
+
+    expected_version = session.scalar(
+        select(ContentItem.label_version).where(ContentItem.id == content.id)
+    )
+    if expected_version is None:
+        raise ValueError('内容不存在')
+
     restored_label = None
     if event.supersedes_event_id:
         previous = session.get(LabelEvent, event.supersedes_event_id)
         restored_label = previous.label if previous and previous.label in (0, 1) else None
-    content.current_label = restored_label
+
     session.add(LabelEvent(
         content_id=content.id,
         user_id=user_id,
@@ -62,4 +99,24 @@ def undo_label(session: Session, event: LabelEvent, *, user_id: str | None = Non
         model_version=event.model_version,
         probability_at_label=event.probability_at_label,
     ))
+    session.flush()
+
+    result = session.execute(
+        update(ContentItem)
+        .where(
+            ContentItem.id == content.id,
+            ContentItem.label_version == expected_version,
+        )
+        .values(
+            current_label=restored_label,
+            label_version=expected_version + 1,
+            updated_at=utcnow(),
+        )
+    )
+    if result.rowcount != 1:
+        raise LabelConflictError('内容标签已被其他操作更新，请刷新后重试')
+
+    session.refresh(content)
+    if content.label_version != expected_version + 1 or content.current_label != restored_label:
+        raise LabelConflictError('内容标签已被其他操作更新，请刷新后重试')
     return content

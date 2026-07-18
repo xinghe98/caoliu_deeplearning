@@ -26,6 +26,7 @@ class ContentItem(Base):
     status: Mapped[str] = mapped_column(String(24), default='ready', index=True)
     dataset_role: Mapped[str] = mapped_column(String(32), default='production', index=True)
     current_label: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    label_version: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
