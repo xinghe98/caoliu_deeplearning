@@ -14,9 +14,9 @@ function scoreText(item: ContentRead) {
 }
 
 function labelText(item: ContentRead) {
+  if (item.is_watched) return '已看过'
   if (item.current_label === 1) return '喜欢'
   if (item.current_label === 0) return '不喜欢'
-  if (item.is_watched) return '已看过'
   return '未标注'
 }
 
@@ -59,12 +59,24 @@ export function ContentDetailPage() {
     invalidateAll()
   }, [invalidateAll, queryClient])
 
+  const markWatchedItem = useCallback(async (watchedId: ContentRead['id']) => {
+    await queryClient.cancelQueries({ queryKey: ['feed'] })
+    queryClient.setQueriesData<ContentRead[]>(
+      { queryKey: ['feed'] },
+      (cached) => cached?.filter((item) => item.id !== watchedId),
+    )
+    queryClient.setQueryData<ContentRead>(['content', watchedId], (cached) => (
+      cached ? { ...cached, is_watched: true, current_label: null } : cached
+    ))
+    invalidateAll()
+  }, [invalidateAll, queryClient])
+
   const { busy, error, like, dislike, skip, markWatched, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
     onLabeled: consumeLabeledItem,
     onSkipped: consumeLabeledItem,
-    onWatched: consumeLabeledItem,
+    onWatched: markWatchedItem,
     onUndo: invalidateAll,
   })
 

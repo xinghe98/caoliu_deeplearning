@@ -9,9 +9,9 @@ import type { ContentRead } from '../api/types'
 const PAGE_SIZE = 24
 
 function labelText(item: ContentRead) {
+  if (item.is_watched) return '已看过'
   if (item.current_label === 1) return '喜欢'
   if (item.current_label === 0) return '不喜欢'
-  if (item.is_watched) return '已看过'
   return '未标注'
 }
 
@@ -149,7 +149,7 @@ export function LibraryPage() {
                   {item.title_clean || '无标题'}
                 </h2>
                 <div className="flex items-center justify-between gap-2 text-xs text-muted">
-                  <span className={`truncate ${item.current_label === 1 ? 'text-like' : item.current_label === 0 ? 'text-dislike' : item.is_watched ? 'text-teal' : ''}`}>{labelText(item)}</span>
+                  <span className={`truncate ${item.is_watched ? 'text-teal' : item.current_label === 1 ? 'text-like' : item.current_label === 0 ? 'text-dislike' : ''}`}>{labelText(item)}</span>
                   <span className="shrink-0 tabular-nums">{scoreText(item)}</span>
                 </div>
                 <p className="truncate text-xs text-muted" title={new Date(item.created_at).toLocaleString('zh-CN')}>

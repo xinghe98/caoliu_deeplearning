@@ -14,14 +14,27 @@ from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
 from .domain.splits import stable_split
-from .models import ContentItem, LabelEvent, SnapshotLabelEvent, TrainingSnapshot, utcnow
+from .models import ContentItem, LabelEvent, SnapshotLabelEvent, TrainingSnapshot, ViewEvent, utcnow
+
+
+def _watched_exists():
+    return exists(
+        select(ViewEvent.id).where(
+            ViewEvent.content_id == ContentItem.id,
+            ViewEvent.event_type == 'watched',
+        )
+    )
 
 
 def _manifest_rows(session: Session, include_external: bool = False):
     contents = session.scalars(
         select(ContentItem)
         .options(selectinload(ContentItem.media))
-        .where(ContentItem.current_label.is_not(None), ContentItem.status == 'ready')
+        .where(
+            ContentItem.current_label.is_not(None),
+            ContentItem.status == 'ready',
+            ~_watched_exists(),
+        )
         .order_by(ContentItem.id)
     ).all()
     rows = []

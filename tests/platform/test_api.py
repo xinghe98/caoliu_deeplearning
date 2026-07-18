@@ -280,6 +280,27 @@ def test_watched_is_separate_from_like_dislike_and_feed(auth_client, platform_en
     assert any(item['id'] == content_id for item in watched.json()['items'])
     assert all(item['is_watched'] for item in watched.json()['items'])
 
+    # Marking watched on a liked item clears preference label and moves it to watched.
+    liked_id = auth_client.post(
+        '/api/v1/ingest/content',
+        headers={'X-Ingest-Key': 'test-ingest-key'},
+        json={
+            'content_key': 'url:liked-then-watched',
+            'source_url': 'https://example.com/liked-then-watched',
+            'title_clean': 'liked then watched',
+            'media': [{'source_path': str(image), 'ordinal': 1}],
+        },
+    ).json()['content_id']
+    assert auth_client.post(f'/api/v1/contents/{liked_id}/label', json={'label': 1}).status_code == 200
+    assert auth_client.post(f'/api/v1/contents/{liked_id}/events', json={'event_type': 'watched'}).status_code == 204
+    detail_after = auth_client.get(f'/api/v1/contents/{liked_id}').json()
+    assert detail_after['is_watched'] is True
+    assert detail_after['current_label'] is None
+    liked_after = auth_client.get('/api/v1/contents', params={'label': 1})
+    watched_after = auth_client.get('/api/v1/contents', params={'watched': 'true'})
+    assert all(item['id'] != liked_id for item in liked_after.json()['items'])
+    assert any(item['id'] == liked_id for item in watched_after.json()['items'])
+
 
 def test_label_version_cas_rejects_stale_update(auth_client, platform_env):
     from sqlalchemy import update

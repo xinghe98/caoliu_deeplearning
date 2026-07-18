@@ -262,8 +262,8 @@ def list_contents(
     _user: User = Depends(require_user),
 ):
     limit = min(max(limit, 1), 100)
-    # 全部 / 喜欢 / 不喜欢 / 已看过：按模型概率；未标注按时间
-    sort_by_score = not unlabeled
+    # 全部 / 喜欢 / 不喜欢：按模型概率；未标注 / 已看过：按时间
+    sort_by_score = not unlabeled and not watched
     model_version = active_model_version(session)
     if sort_by_score:
         latest_prob = (
@@ -281,14 +281,14 @@ def list_contents(
         query = content_query().order_by(ContentItem.created_at.desc(), ContentItem.id.desc())
 
     if watched:
-        # Permanent bucket outside like/dislike preference labels.
+        # Permanent archive: any content with a watched event.
         query = query.where(watched_exists_clause())
-        query = query.where(ContentItem.current_label.is_(None))
     elif unlabeled:
         query = query.where(ContentItem.current_label.is_(None))
         query = query.where(~watched_exists_clause())
     elif label in (0, 1):
         query = query.where(ContentItem.current_label == label)
+        query = query.where(~watched_exists_clause())
     if status:
         query = query.where(ContentItem.status == status)
 
@@ -466,8 +466,13 @@ def content_event(
     _user: User = Depends(require_user),
     _: None = Depends(enforce_csrf),
 ):
-    get_content_or_404(session, content_id)
+    content = get_content_or_404(session, content_id)
     session.add(ViewEvent(content_id=content_id, event_type=payload.event_type))
+    # Watched is an exclusive archive outside preference labels / training.
+    if payload.event_type == 'watched' and content.current_label is not None:
+        content.current_label = None
+        content.label_version = int(content.label_version or 0) + 1
+        content.updated_at = utcnow()
     session.commit()
     return Response(status_code=204)
 
