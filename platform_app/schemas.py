@@ -85,6 +85,10 @@ class EventCreate(BaseModel):
     event_type: Literal['view', 'skip', 'watched', 'open_source', 'copy_magnet', 'open_magnet']
 
 
+class WatchedUpdate(BaseModel):
+    watched: bool
+
+
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str

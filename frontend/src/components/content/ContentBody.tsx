@@ -1,4 +1,4 @@
-import { CheckCheck, Heart, SkipForward, ThumbsDown } from 'lucide-react'
+import { CheckCheck, CircleDashed, Heart, SkipForward, ThumbsDown } from 'lucide-react'
 import type { ContentRead } from '../../api/types'
 import { ActionButton } from './ActionButton'
 import { MagnetActions } from './MagnetActions'
@@ -26,6 +26,8 @@ export function ContentBody({
   onCopyMagnet,
   onOpenMagnet,
 }: ContentBodyProps) {
+  const watched = Boolean(item.is_watched)
+
   return (
     <>
       <div className="grid gap-7 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:p-7">
@@ -47,7 +49,9 @@ export function ContentBody({
               </span>
             ) : null}
             <span>采集于 {new Date(item.created_at).toLocaleString('zh-CN')}</span>
-            {item.is_watched ? <span className="text-teal">已看过</span> : null}
+            <span className={watched ? 'text-teal' : 'text-[oklch(45%_0.12_85)]'}>
+              {watched ? '已看过' : '未看过'}
+            </span>
           </div>
 
           <MagnetActions item={item} onCopy={onCopyMagnet} onOpen={onOpenMagnet} />
@@ -78,20 +82,21 @@ export function ContentBody({
             label="跳过 (3)"
           />
           <ActionButton
-            tone="watched"
+            tone={watched ? 'watched' : 'unwatched'}
             disabled={busy}
             onClick={onWatched}
-            icon={<CheckCheck size={18} />}
-            label="已看过 (4)"
+            icon={watched ? <CheckCheck size={18} /> : <CircleDashed size={18} />}
+            label={watched ? '已看过 (4)' : '未看过 (4)'}
           />
         </div>
         <p className="hidden text-xs text-muted md:block md:pl-7">
-          快捷键：1 喜欢 · 2 不喜欢 · 3 跳过 · 4 已看过 · M 复制 · ←/→ 切图 · Z 撤销
+          快捷键：1 喜欢 · 2 不喜欢 · 3 跳过 · 4 切换已看过 · M 复制 · ←/→ 切图 · Z 撤销
         </p>
       </div>
 
       <MobileLabelBar
         busy={busy}
+        watched={watched}
         onLike={onLike}
         onDislike={onDislike}
         onSkip={onSkip}
@@ -103,12 +108,14 @@ export function ContentBody({
 
 function MobileLabelBar({
   busy,
+  watched,
   onLike,
   onDislike,
   onSkip,
   onWatched,
 }: {
   busy: boolean
+  watched: boolean
   onLike: () => void
   onDislike: () => void
   onSkip: () => void
@@ -120,7 +127,13 @@ function MobileLabelBar({
         <ActionButton tone="like" disabled={busy} onClick={onLike} icon={<Heart size={18} />} label="喜欢" />
         <ActionButton tone="dislike" disabled={busy} onClick={onDislike} icon={<ThumbsDown size={18} />} label="不喜欢" />
         <ActionButton tone="skip" disabled={busy} onClick={onSkip} icon={<SkipForward size={18} />} label="跳过" />
-        <ActionButton tone="watched" disabled={busy} onClick={onWatched} icon={<CheckCheck size={18} />} label="已看过" />
+        <ActionButton
+          tone={watched ? 'watched' : 'unwatched'}
+          disabled={busy}
+          onClick={onWatched}
+          icon={watched ? <CheckCheck size={18} /> : <CircleDashed size={18} />}
+          label={watched ? '已看过' : '未看过'}
+        />
       </div>
     </div>
   )

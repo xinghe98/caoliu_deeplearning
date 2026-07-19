@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 type ActionButtonProps = {
-  tone: 'like' | 'dislike' | 'skip' | 'watched'
+  tone: 'like' | 'dislike' | 'skip' | 'watched' | 'unwatched'
   label: string
   icon: ReactNode
   onClick: () => void
@@ -13,7 +13,8 @@ export function ActionButton({ tone, label, icon, onClick, disabled }: ActionBut
     like: 'bg-like text-panel hover:bg-[oklch(47%_0.19_28)]',
     dislike: 'bg-dislike text-panel hover:bg-ink',
     skip: 'border border-line bg-panel text-ink hover:bg-canvas',
-    watched: 'border border-teal/30 bg-teal-soft text-teal hover:bg-teal hover:text-panel',
+    watched: 'border border-teal/40 bg-teal text-panel hover:bg-[oklch(42%_0.12_272)]',
+    unwatched: 'border border-unwatched/50 bg-unwatched-soft text-[oklch(45%_0.12_85)] hover:bg-unwatched hover:text-panel',
   }[tone]
 
   return (

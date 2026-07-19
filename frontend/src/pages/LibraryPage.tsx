@@ -9,9 +9,9 @@ import type { ContentRead } from '../api/types'
 const PAGE_SIZE = 24
 
 function labelText(item: ContentRead) {
+  if (item.current_label === 1) return item.is_watched ? '喜欢 · 已看过' : '喜欢'
+  if (item.current_label === 0) return item.is_watched ? '不喜欢 · 已看过' : '不喜欢'
   if (item.is_watched) return '已看过'
-  if (item.current_label === 1) return '喜欢'
-  if (item.current_label === 0) return '不喜欢'
   return '未标注'
 }
 

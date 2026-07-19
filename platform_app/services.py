@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import desc, exists, func, select
+from sqlalchemy import delete, desc, exists, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
@@ -248,6 +248,29 @@ def watched_exists_clause():
             ViewEvent.event_type == 'watched',
         )
     )
+
+
+def set_content_watched(session: Session, content: ContentItem, watched: bool) -> bool:
+    """Toggle watched flag without touching preference labels (like/dislike)."""
+    existing = session.scalars(
+        select(ViewEvent).where(
+            ViewEvent.content_id == content.id,
+            ViewEvent.event_type == 'watched',
+        )
+    ).all()
+    if watched:
+        if existing:
+            return True
+        session.add(ViewEvent(content_id=content.id, event_type='watched'))
+        return True
+    if existing:
+        session.execute(
+            delete(ViewEvent).where(
+                ViewEvent.content_id == content.id,
+                ViewEvent.event_type == 'watched',
+            )
+        )
+    return False
 
 
 def feed_contents(session: Session, limit: int, mode: str) -> list[ContentItem]:

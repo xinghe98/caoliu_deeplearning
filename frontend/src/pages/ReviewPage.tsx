@@ -55,12 +55,21 @@ export function ReviewPage() {
     invalidateSideData()
   }, [invalidateSideData, queryClient])
 
-  const { busy, error, like, dislike, skip, markWatched, copyMagnet, openMagnet } = useContentLabeling({
+  const onWatchedToggle = useCallback(async (updated: ContentRead) => {
+    if (updated.is_watched) {
+      await consumeFeedItem(updated.id)
+      return
+    }
+    // Unwatched while still on review is rare; refresh side lists only.
+    invalidateSideData()
+  }, [consumeFeedItem, invalidateSideData])
+
+  const { busy, error, like, dislike, skip, toggleWatched, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
     onLabeled: consumeFeedItem,
     onSkipped: consumeFeedItem,
-    onWatched: consumeFeedItem,
+    onWatchedToggle,
     onUndo: reloadFeed,
   })
 
@@ -119,7 +128,7 @@ export function ReviewPage() {
         onLike={like}
         onDislike={dislike}
         onSkip={skip}
-        onWatched={markWatched}
+        onWatched={toggleWatched}
         onCopyMagnet={() => void copyMagnet(current)}
         onOpenMagnet={() => void openMagnet(current)}
       />

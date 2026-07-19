@@ -348,7 +348,7 @@ def test_contents_title_search_normalizes_and_supports_multi_tokens(auth_client,
     assert other not in {item['id'] for item in liked_search.json()['items']}
 
 
-def test_watched_is_separate_from_like_dislike_and_feed(auth_client, platform_env):
+def test_watched_toggle_preserves_like_and_returns_to_like_filter(auth_client, platform_env):
     image = make_image(platform_env['media_root'] / 'watched.jpg')
     content_id = auth_client.post(
         '/api/v1/ingest/content',
@@ -364,28 +364,23 @@ def test_watched_is_separate_from_like_dislike_and_feed(auth_client, platform_en
     feed_before = auth_client.get('/api/v1/feed')
     assert any(item['id'] == content_id for item in feed_before.json())
 
-    marked = auth_client.post(f'/api/v1/contents/{content_id}/events', json={'event_type': 'watched'})
-    assert marked.status_code == 204
+    marked = auth_client.put(f'/api/v1/contents/{content_id}/watched', json={'watched': True})
+    assert marked.status_code == 200
+    assert marked.json()['is_watched'] is True
+    assert marked.json()['current_label'] is None
 
     detail = auth_client.get(f'/api/v1/contents/{content_id}')
-    assert detail.status_code == 200
-    assert detail.json()['current_label'] is None
     assert detail.json()['is_watched'] is True
 
     feed_after = auth_client.get('/api/v1/feed')
     assert all(item['id'] != content_id for item in feed_after.json())
 
-    liked = auth_client.get('/api/v1/contents', params={'label': 1})
-    disliked = auth_client.get('/api/v1/contents', params={'label': 0})
     unlabeled = auth_client.get('/api/v1/contents', params={'unlabeled': 'true'})
     watched = auth_client.get('/api/v1/contents', params={'watched': 'true'})
-    assert all(item['id'] != content_id for item in liked.json()['items'])
-    assert all(item['id'] != content_id for item in disliked.json()['items'])
     assert all(item['id'] != content_id for item in unlabeled.json()['items'])
     assert any(item['id'] == content_id for item in watched.json()['items'])
-    assert all(item['is_watched'] for item in watched.json()['items'])
 
-    # Marking watched on a liked item clears preference label and moves it to watched.
+    # Like then watch: keep current_label; leave like list while watched; return after unwatch.
     liked_id = auth_client.post(
         '/api/v1/ingest/content',
         headers={'X-Ingest-Key': 'test-ingest-key'},
@@ -397,14 +392,25 @@ def test_watched_is_separate_from_like_dislike_and_feed(auth_client, platform_en
         },
     ).json()['content_id']
     assert auth_client.post(f'/api/v1/contents/{liked_id}/label', json={'label': 1}).status_code == 200
-    assert auth_client.post(f'/api/v1/contents/{liked_id}/events', json={'event_type': 'watched'}).status_code == 204
-    detail_after = auth_client.get(f'/api/v1/contents/{liked_id}').json()
-    assert detail_after['is_watched'] is True
-    assert detail_after['current_label'] is None
+    watched_on = auth_client.put(f'/api/v1/contents/{liked_id}/watched', json={'watched': True})
+    assert watched_on.status_code == 200
+    assert watched_on.json()['is_watched'] is True
+    assert watched_on.json()['current_label'] == 1
+
+    liked_while_watched = auth_client.get('/api/v1/contents', params={'label': 1})
+    watched_list = auth_client.get('/api/v1/contents', params={'watched': 'true'})
+    assert all(item['id'] != liked_id for item in liked_while_watched.json()['items'])
+    assert any(item['id'] == liked_id for item in watched_list.json()['items'])
+
+    watched_off = auth_client.put(f'/api/v1/contents/{liked_id}/watched', json={'watched': False})
+    assert watched_off.status_code == 200
+    assert watched_off.json()['is_watched'] is False
+    assert watched_off.json()['current_label'] == 1
+
     liked_after = auth_client.get('/api/v1/contents', params={'label': 1})
     watched_after = auth_client.get('/api/v1/contents', params={'watched': 'true'})
-    assert all(item['id'] != liked_id for item in liked_after.json()['items'])
-    assert any(item['id'] == liked_id for item in watched_after.json()['items'])
+    assert any(item['id'] == liked_id for item in liked_after.json()['items'])
+    assert all(item['id'] != liked_id for item in watched_after.json()['items'])
 
 
 def test_label_version_cas_rejects_stale_update(auth_client, platform_env):

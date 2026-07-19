@@ -60,6 +60,7 @@ from .schemas import (
     SetupAdmin,
     TrainingSnapshotRead,
     TrainingStatusRead,
+    WatchedUpdate,
 )
 from .services import (
     build_content_key_and_group,
@@ -78,6 +79,7 @@ from .services import (
     queue_prediction_job,
     queue_missing_predictions_for_model,
     save_idempotent_response,
+    set_content_watched,
     validate_media_path,
     watched_content_ids,
     watched_exists_clause,
@@ -513,6 +515,26 @@ def label_content(
     return result
 
 
+@app.put('/api/v1/contents/{content_id}/watched', response_model=ContentRead)
+def update_watched(
+    content_id: str,
+    payload: WatchedUpdate,
+    session: Session = Depends(get_session),
+    _user: User = Depends(require_user),
+    _: None = Depends(enforce_csrf),
+):
+    content = get_content_or_404(session, content_id)
+    is_watched = set_content_watched(session, content, payload.watched)
+    session.commit()
+    refreshed = get_content_or_404(session, content_id)
+    return content_read(
+        refreshed,
+        active_model_version(session),
+        is_watched=is_watched,
+        labeled_at=labeled_at_map(session, [refreshed]).get(refreshed.id),
+    )
+
+
 @app.post('/api/v1/contents/{content_id}/events', status_code=204)
 def content_event(
     content_id: str,
@@ -522,12 +544,11 @@ def content_event(
     _: None = Depends(enforce_csrf),
 ):
     content = get_content_or_404(session, content_id)
-    session.add(ViewEvent(content_id=content_id, event_type=payload.event_type))
-    # Watched is an exclusive archive outside preference labels / training.
-    if payload.event_type == 'watched' and content.current_label is not None:
-        content.current_label = None
-        content.label_version = int(content.label_version or 0) + 1
-        content.updated_at = utcnow()
+    # Prefer PUT /watched for toggles; keep event path as one-way mark without clearing labels.
+    if payload.event_type == 'watched':
+        set_content_watched(session, content, True)
+    else:
+        session.add(ViewEvent(content_id=content_id, event_type=payload.event_type))
     session.commit()
     return Response(status_code=204)
 

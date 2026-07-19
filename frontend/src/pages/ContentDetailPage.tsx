@@ -14,9 +14,9 @@ function scoreText(item: ContentRead) {
 }
 
 function labelText(item: ContentRead) {
+  if (item.current_label === 1) return item.is_watched ? '喜欢 · 已看过' : '喜欢'
+  if (item.current_label === 0) return item.is_watched ? '不喜欢 · 已看过' : '不喜欢'
   if (item.is_watched) return '已看过'
-  if (item.current_label === 1) return '喜欢'
-  if (item.current_label === 0) return '不喜欢'
   return '未标注'
 }
 
@@ -59,24 +59,24 @@ export function ContentDetailPage() {
     invalidateAll()
   }, [invalidateAll, queryClient])
 
-  const markWatchedItem = useCallback(async (watchedId: ContentRead['id']) => {
+  const onWatchedToggle = useCallback(async (updated: ContentRead) => {
     await queryClient.cancelQueries({ queryKey: ['feed'] })
-    queryClient.setQueriesData<ContentRead[]>(
-      { queryKey: ['feed'] },
-      (cached) => cached?.filter((item) => item.id !== watchedId),
-    )
-    queryClient.setQueryData<ContentRead>(['content', watchedId], (cached) => (
-      cached ? { ...cached, is_watched: true, current_label: null } : cached
-    ))
+    if (updated.is_watched) {
+      queryClient.setQueriesData<ContentRead[]>(
+        { queryKey: ['feed'] },
+        (cached) => cached?.filter((item) => item.id !== updated.id),
+      )
+    }
+    queryClient.setQueryData<ContentRead>(['content', updated.id], updated)
     invalidateAll()
   }, [invalidateAll, queryClient])
 
-  const { busy, error, like, dislike, skip, markWatched, copyMagnet, openMagnet } = useContentLabeling({
+  const { busy, error, like, dislike, skip, toggleWatched, copyMagnet, openMagnet } = useContentLabeling({
     current,
     setImageIndex,
     onLabeled: consumeLabeledItem,
     onSkipped: consumeLabeledItem,
-    onWatched: markWatchedItem,
+    onWatchedToggle,
     onUndo: invalidateAll,
   })
 
@@ -124,7 +124,7 @@ export function ContentDetailPage() {
         onLike={like}
         onDislike={dislike}
         onSkip={skip}
-        onWatched={markWatched}
+        onWatched={toggleWatched}
         onCopyMagnet={() => void copyMagnet(current)}
         onOpenMagnet={() => void openMagnet(current)}
       />

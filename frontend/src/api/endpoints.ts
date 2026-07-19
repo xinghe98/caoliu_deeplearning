@@ -59,6 +59,8 @@ export const contentApi = {
     event_type: 'view' | 'skip' | 'watched' | 'open_source' | 'copy_magnet' | 'open_magnet',
   ) =>
     api<void>(`/api/v1/contents/${id}/events`, { method: 'POST', json: { event_type } }),
+  setWatched: (id: string, watched: boolean) =>
+    api<ContentRead>(`/api/v1/contents/${id}/watched`, { method: 'PUT', json: { watched } }),
 }
 
 export const labelsApi = {

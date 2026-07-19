@@ -6,13 +6,14 @@ import type { ContentRead } from '../api/types'
 import { useToast } from '../components/Toast'
 
 type ItemActionCallback = (contentId: ContentRead['id']) => void | Promise<void>
+type WatchedToggleCallback = (updated: ContentRead) => void | Promise<void>
 
 type UseContentLabelingOptions = {
   current: ContentRead | null
   setImageIndex: React.Dispatch<React.SetStateAction<number>>
   onLabeled?: ItemActionCallback
   onSkipped?: ItemActionCallback
-  onWatched?: ItemActionCallback
+  onWatchedToggle?: WatchedToggleCallback
   onUndo?: () => void | Promise<void>
 }
 
@@ -30,7 +31,7 @@ export function useContentLabeling({
   setImageIndex,
   onLabeled,
   onSkipped,
-  onWatched,
+  onWatchedToggle,
   onUndo,
 }: UseContentLabelingOptions) {
   const { push } = useToast()
@@ -107,20 +108,25 @@ export function useContentLabeling({
 
   const watchedMutation = useMutation({
     mutationFn: async (item: ContentRead) => {
-      await contentApi.event(item.id, 'watched')
-      return item.id
+      const next = !item.is_watched
+      const updated = await contentApi.setWatched(item.id, next)
+      return updated
     },
-    onSuccess: async (contentId) => {
+    onSuccess: async (updated) => {
       setError('')
       try {
-        await onWatched?.(contentId)
+        await onWatchedToggle?.(updated)
       } catch {
         // Keep unlock path in onSettled even if cache updates fail.
       }
-      push({ message: '已标记看过（单独归档，不进入喜欢/不喜欢/训练）' })
+      push({
+        message: updated.is_watched
+          ? '已标记看过（可再次点击改回未看过；喜欢/不喜欢标签会保留）'
+          : '已改回未看过（若有喜欢/不喜欢，会回到对应列表）',
+      })
     },
     onError: (err) => {
-      setError(err instanceof HttpError ? err.detail : '标记已看过失败')
+      setError(err instanceof HttpError ? err.detail : '切换已看过状态失败')
     },
     onSettled: () => {
       actionLockRef.current = false
@@ -168,7 +174,7 @@ export function useContentLabeling({
     skipMutation.mutate(current)
   }, [current, skipMutation])
 
-  const submitWatched = useCallback(() => {
+  const submitWatchedToggle = useCallback(() => {
     if (!current || actionLockRef.current) return
     actionLockRef.current = true
     watchedMutation.mutate(current)
@@ -177,7 +183,7 @@ export function useContentLabeling({
   const like = useCallback(() => submitLabel(1), [submitLabel])
   const dislike = useCallback(() => submitLabel(0), [submitLabel])
   const skip = useCallback(() => submitSkip(), [submitSkip])
-  const markWatched = useCallback(() => submitWatched(), [submitWatched])
+  const toggleWatched = useCallback(() => submitWatchedToggle(), [submitWatchedToggle])
 
   const undoLast = useCallback(() => {
     if (!lastEventId || undoLockRef.current) return
@@ -214,7 +220,7 @@ export function useContentLabeling({
         submitSkip()
       } else if (event.key === '4') {
         event.preventDefault()
-        submitWatched()
+        submitWatchedToggle()
       } else if (event.key.toLowerCase() === 'm') {
         if (!current) return
         event.preventDefault()
@@ -234,7 +240,7 @@ export function useContentLabeling({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [copyMagnet, current, setImageIndex, submitLabel, submitSkip, submitWatched, undoLast])
+  }, [copyMagnet, current, setImageIndex, submitLabel, submitSkip, submitWatchedToggle, undoLast])
 
   return {
     busy,
@@ -242,7 +248,7 @@ export function useContentLabeling({
     like,
     dislike,
     skip,
-    markWatched,
+    toggleWatched,
     copyMagnet,
     openMagnet,
   }
