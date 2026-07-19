@@ -33,6 +33,19 @@ export function ContentBody({
           <h2 className="page-heading max-w-3xl text-2xl leading-snug break-words">{item.title_clean || '无标题'}</h2>
           <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted">
             <span>模型 {item.model_version || '尚未指定'}</span>
+            {item.labeled_at && (item.current_label === 0 || item.current_label === 1) ? (
+              <span>
+                标注于{' '}
+                {(() => {
+                  const time = new Date(item.labeled_at)
+                  if (Number.isNaN(time.getTime())) return '未知'
+                  const y = time.getFullYear()
+                  const m = String(time.getMonth() + 1).padStart(2, '0')
+                  const d = String(time.getDate()).padStart(2, '0')
+                  return `${y}/${m}/${d}`
+                })()}
+              </span>
+            ) : null}
             <span>采集于 {new Date(item.created_at).toLocaleString('zh-CN')}</span>
             {item.is_watched ? <span className="text-teal">已看过</span> : null}
           </div>

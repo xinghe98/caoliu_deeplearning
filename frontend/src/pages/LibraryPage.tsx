@@ -26,6 +26,16 @@ function crawledAtText(createdAt: string) {
   return `采集于 ${time.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })}`
 }
 
+function labeledAtText(labeledAt: string | null | undefined) {
+  if (!labeledAt) return null
+  const time = new Date(labeledAt)
+  if (Number.isNaN(time.getTime())) return null
+  const y = time.getFullYear()
+  const m = String(time.getMonth() + 1).padStart(2, '0')
+  const d = String(time.getDate()).padStart(2, '0')
+  return `标注于 ${y}/${m}/${d}`
+}
+
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -36,7 +46,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export function LibraryPage() {
-  const [label, setLabel] = useState<'all' | '1' | '0' | 'unlabeled' | 'watched'>('all')
+  const [label, setLabel] = useState<'all' | '1' | '0' | 'unlabeled' | 'watched'>('1')
   const [searchInput, setSearchInput] = useState('')
   const debouncedSearch = useDebouncedValue(searchInput.trim(), 300)
   const [showTop, setShowTop] = useState(false)
@@ -176,6 +186,11 @@ export function LibraryPage() {
                   <span className={`truncate ${item.is_watched ? 'text-teal' : item.current_label === 1 ? 'text-like' : item.current_label === 0 ? 'text-dislike' : ''}`}>{labelText(item)}</span>
                   <span className="shrink-0 tabular-nums">{scoreText(item)}</span>
                 </div>
+                {labeledAtText(item.labeled_at) ? (
+                  <p className="truncate text-xs text-muted" title={new Date(item.labeled_at!).toLocaleString('zh-CN')}>
+                    {labeledAtText(item.labeled_at)}
+                  </p>
+                ) : null}
                 <p className="truncate text-xs text-muted" title={new Date(item.created_at).toLocaleString('zh-CN')}>
                   {crawledAtText(item.created_at)}
                 </p>

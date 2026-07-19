@@ -68,6 +68,7 @@ from .services import (
     content_read,
     feed_contents,
     get_idempotent_response,
+    labeled_at_map,
     make_cursor,
     make_score_cursor,
     make_time_cursor,
@@ -335,8 +336,14 @@ def list_contents(
     has_more = len(rows) > limit
     page = rows[:limit]
     watched_ids = watched_content_ids(session, [item.id for item in page])
+    labeled_times = labeled_at_map(session, page)
     items = [
-        content_read(item, model_version, is_watched=item.id in watched_ids)
+        content_read(
+            item,
+            model_version,
+            is_watched=item.id in watched_ids,
+            labeled_at=labeled_times.get(item.id),
+        )
         for item in page
     ]
     if has_more and page:
@@ -367,6 +374,7 @@ def get_content(content_id: str, session: Session = Depends(get_session), _user:
         content,
         active_model_version(session),
         is_watched=content.id in watched_content_ids(session, [content.id]),
+        labeled_at=labeled_at_map(session, [content]).get(content.id),
     )
 
 
@@ -420,8 +428,14 @@ def get_feed(
     model_version = active_model_version(session)
     rows = feed_contents(session, limit, mode)
     watched_ids = watched_content_ids(session, [item.id for item in rows])
+    labeled_times = labeled_at_map(session, rows)
     return [
-        content_read(item, model_version, is_watched=item.id in watched_ids)
+        content_read(
+            item,
+            model_version,
+            is_watched=item.id in watched_ids,
+            labeled_at=labeled_times.get(item.id),
+        )
         for item in rows
     ]
 
@@ -468,8 +482,13 @@ def label_content(
     maybe_queue_training_snapshot(session)
     session.flush()
     model_version = active_model_version(session)
+    labeled = get_content_or_404(session, content_id)
     result = LabelResultRead(
-        **content_read(get_content_or_404(session, content_id), model_version).model_dump(),
+        **content_read(
+            labeled,
+            model_version,
+            labeled_at=event.created_at,
+        ).model_dump(),
         label_event_id=event.id,
     )
     if idempotency_key:
@@ -545,7 +564,12 @@ def undo_label_event(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
-    return content_read(get_content_or_404(session, content.id), active_model_version(session))
+    restored = get_content_or_404(session, content.id)
+    return content_read(
+        restored,
+        active_model_version(session),
+        labeled_at=labeled_at_map(session, [restored]).get(restored.id),
+    )
 
 
 @app.get('/api/v1/jobs', response_model=list[JobRead])

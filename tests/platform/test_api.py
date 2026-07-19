@@ -213,6 +213,34 @@ def test_invalid_content_cursor_returns_422(auth_client):
         assert response.status_code == 422
 
 
+def test_content_includes_labeled_at_after_label(auth_client, platform_env):
+    image = make_image(platform_env['media_root'] / 'labeled-at.jpg')
+    content_id = auth_client.post(
+        '/api/v1/ingest/content',
+        headers={'X-Ingest-Key': 'test-ingest-key'},
+        json={
+            'content_key': 'url:labeled-at',
+            'source_url': 'https://example.com/labeled-at',
+            'title_clean': 'labeled at',
+            'media': [{'source_path': str(image), 'ordinal': 1}],
+        },
+    ).json()['content_id']
+
+    before = auth_client.get(f'/api/v1/contents/{content_id}')
+    assert before.status_code == 200
+    assert before.json()['labeled_at'] is None
+
+    labeled = auth_client.post(f'/api/v1/contents/{content_id}/label', json={'label': 1})
+    assert labeled.status_code == 200
+    assert labeled.json()['labeled_at']
+
+    detail = auth_client.get(f'/api/v1/contents/{content_id}')
+    assert detail.json()['labeled_at']
+    listed = auth_client.get('/api/v1/contents', params={'label': 1})
+    match = next(item for item in listed.json()['items'] if item['id'] == content_id)
+    assert match['labeled_at']
+
+
 def test_like_dislike_lists_sort_by_recent_label_time(auth_client, platform_env):
     import time
 

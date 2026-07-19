@@ -42,6 +42,7 @@ class ContentRead(BaseModel):
     current_label: int | None
     is_watched: bool = False
     created_at: datetime
+    labeled_at: datetime | None = None
     media: list[MediaRead] = []
     probability: float | None = None
     decision_threshold: float | None = None

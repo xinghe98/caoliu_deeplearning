@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import desc, exists, select
+from sqlalchemy import desc, exists, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
@@ -40,11 +40,43 @@ def active_model_version(session: Session) -> str | None:
     return session.scalar(select(ModelVersion.version).where(ModelVersion.status == 'active'))
 
 
+def labeled_at_map(session: Session, contents: list[ContentItem]) -> dict[str, datetime]:
+    """Latest non-undo label time matching each item's current preference label."""
+    pairs = [
+        (item.id, item.current_label)
+        for item in contents
+        if item.current_label in (0, 1)
+    ]
+    if not pairs:
+        return {}
+    content_ids = [content_id for content_id, _ in pairs]
+    rows = session.execute(
+        select(
+            LabelEvent.content_id,
+            LabelEvent.label,
+            func.max(LabelEvent.created_at),
+        )
+        .where(
+            LabelEvent.content_id.in_(content_ids),
+            LabelEvent.source != 'undo',
+            LabelEvent.label.in_((0, 1)),
+        )
+        .group_by(LabelEvent.content_id, LabelEvent.label)
+    ).all()
+    by_pair = {(content_id, label): moment for content_id, label, moment in rows}
+    return {
+        content_id: by_pair[(content_id, label)]
+        for content_id, label in pairs
+        if (content_id, label) in by_pair
+    }
+
+
 def content_read(
     content: ContentItem,
     model_version: str | None,
     *,
     is_watched: bool = False,
+    labeled_at: datetime | None = None,
 ) -> ContentRead:
     latest_prediction = next(
         (prediction for prediction in content.predictions if prediction.model_version == model_version),
@@ -60,6 +92,7 @@ def content_read(
         current_label=content.current_label,
         is_watched=is_watched,
         created_at=content.created_at,
+        labeled_at=labeled_at,
         media=[media for media in sorted(content.media, key=lambda item: item.ordinal)],
         probability=latest_prediction.probability if latest_prediction else None,
         decision_threshold=latest_prediction.decision_threshold if latest_prediction else None,

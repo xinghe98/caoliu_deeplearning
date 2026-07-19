@@ -17,6 +17,7 @@ export type ContentRead = {
   current_label: number | null
   is_watched: boolean
   created_at: string
+  labeled_at: string | null
   media: MediaRead[]
   probability: number | null
   decision_threshold: number | null
