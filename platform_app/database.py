@@ -22,6 +22,12 @@ def _sqlite_pragmas(dbapi_connection, _connection_record):
     cursor.close()
 
 
+def _sqlite_register_functions(dbapi_connection, _connection_record):
+    from .domain.search import normalize_title_text
+
+    dbapi_connection.create_function('normalize_title', 1, normalize_title_text)
+
+
 def configure_engine(database_url: str | None = None) -> Engine:
     global engine, _session_factory
     url = database_url or get_settings().resolved_database_url
@@ -31,6 +37,7 @@ def configure_engine(database_url: str | None = None) -> Engine:
     engine = create_engine(url, connect_args=connect_args)
     if url.startswith('sqlite'):
         event.listen(engine, 'connect', _sqlite_pragmas)
+        event.listen(engine, 'connect', _sqlite_register_functions)
     _session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)
     return engine
 

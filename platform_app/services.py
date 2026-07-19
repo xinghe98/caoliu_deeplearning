@@ -150,10 +150,13 @@ def parse_cursor(cursor: str | None) -> tuple[datetime | None, str | None]:
 
 
 def make_cursor(content: ContentItem) -> str:
-    created_at = content.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return f'{created_at.isoformat()}|{content.id}'
+    return make_time_cursor(content.created_at, content.id)
+
+
+def make_time_cursor(moment: datetime, content_id: str) -> str:
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return f'{moment.isoformat()}|{content_id}'
 
 
 def parse_score_cursor(cursor: str | None) -> tuple[float | None, str | None]:

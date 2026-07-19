@@ -213,6 +213,37 @@ def test_invalid_content_cursor_returns_422(auth_client):
         assert response.status_code == 422
 
 
+def test_like_dislike_lists_sort_by_recent_label_time(auth_client, platform_env):
+    import time
+
+    image = make_image(platform_env['media_root'] / 'label-sort.jpg')
+
+    def ingest(key: str) -> str:
+        response = auth_client.post(
+            '/api/v1/ingest/content',
+            headers={'X-Ingest-Key': 'test-ingest-key'},
+            json={
+                'content_key': key,
+                'source_url': f'https://example.com/{key}',
+                'title_clean': key,
+                'media': [{'source_path': str(image), 'ordinal': 1}],
+            },
+        )
+        assert response.status_code == 201
+        return response.json()['content_id']
+
+    first = ingest('url:label-sort-first')
+    second = ingest('url:label-sort-second')
+    assert auth_client.post(f'/api/v1/contents/{first}/label', json={'label': 1}).status_code == 200
+    time.sleep(0.02)
+    assert auth_client.post(f'/api/v1/contents/{second}/label', json={'label': 1}).status_code == 200
+
+    liked = auth_client.get('/api/v1/contents', params={'label': 1})
+    assert liked.status_code == 200
+    ids = [item['id'] for item in liked.json()['items']]
+    assert ids.index(second) < ids.index(first)
+
+
 def test_contents_cursor_pagination(auth_client, platform_env):
     for index in range(5):
         image = make_image(platform_env['media_root'] / f'page_{index}.jpg')
@@ -241,6 +272,52 @@ def test_contents_cursor_pagination(auth_client, platform_env):
     assert len(body2['items']) == 2
     ids = {item['id'] for item in body['items']} | {item['id'] for item in body2['items']}
     assert len(ids) == 4
+
+
+def test_contents_title_search_normalizes_and_supports_multi_tokens(auth_client, platform_env):
+    image = make_image(platform_env['media_root'] / 'search.jpg')
+
+    def ingest(key: str, title: str) -> str:
+        response = auth_client.post(
+            '/api/v1/ingest/content',
+            headers={'X-Ingest-Key': 'test-ingest-key'},
+            json={
+                'content_key': key,
+                'source_url': f'https://example.com/{key}',
+                'title_raw': title,
+                'title_clean': title,
+                'media': [{'source_path': str(image), 'ordinal': 1}],
+            },
+        )
+        assert response.status_code == 201
+        return response.json()['content_id']
+
+    spaced = ingest('url:search-spaced', 'xxxab crrrs')
+    punct = ingest('url:search-punct', 'xx a_b-yy foo')
+    both = ingest('url:search-both', 'Alpha Foo Bar Demo')
+    other = ingest('url:search-other', 'unrelated title')
+
+    by_space = auth_client.get('/api/v1/contents', params={'q': 'abc'})
+    assert by_space.status_code == 200
+    assert {item['id'] for item in by_space.json()['items']} == {spaced}
+
+    by_case = auth_client.get('/api/v1/contents', params={'q': 'ABC'})
+    assert {item['id'] for item in by_case.json()['items']} == {spaced}
+
+    by_punct = auth_client.get('/api/v1/contents', params={'q': 'a-b'})
+    assert {item['id'] for item in by_punct.json()['items']} == {punct}
+
+    multi = auth_client.get('/api/v1/contents', params={'q': 'foo bar'})
+    assert {item['id'] for item in multi.json()['items']} == {both}
+
+    only_foo = auth_client.get('/api/v1/contents', params={'q': 'foo'})
+    assert {item['id'] for item in only_foo.json()['items']} == {punct, both}
+
+    labeled = auth_client.post(f'/api/v1/contents/{both}/label', json={'label': 1})
+    assert labeled.status_code == 200
+    liked_search = auth_client.get('/api/v1/contents', params={'q': 'foo bar', 'label': 1})
+    assert {item['id'] for item in liked_search.json()['items']} == {both}
+    assert other not in {item['id'] for item in liked_search.json()['items']}
 
 
 def test_watched_is_separate_from_like_dislike_and_feed(auth_client, platform_env):

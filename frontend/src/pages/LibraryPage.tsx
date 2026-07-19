@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { ArrowUp } from 'lucide-react'
+import { ArrowUp, Search } from 'lucide-react'
 import { contentApi, jobsApi } from '../api/endpoints'
 import { AuthImage } from '../components/AuthImage'
 import type { ContentRead } from '../api/types'
@@ -26,20 +26,32 @@ function crawledAtText(createdAt: string) {
   return `采集于 ${time.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })}`
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs)
+    return () => window.clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
+
 export function LibraryPage() {
   const [label, setLabel] = useState<'all' | '1' | '0' | 'unlabeled' | 'watched'>('all')
+  const [searchInput, setSearchInput] = useState('')
+  const debouncedSearch = useDebouncedValue(searchInput.trim(), 300)
   const [showTop, setShowTop] = useState(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   const query = useInfiniteQuery({
-    queryKey: ['contents', label],
+    queryKey: ['contents', label, debouncedSearch],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
-      if (label === '1') return contentApi.list({ label: 1, limit: PAGE_SIZE, cursor: pageParam })
-      if (label === '0') return contentApi.list({ label: 0, limit: PAGE_SIZE, cursor: pageParam })
-      if (label === 'unlabeled') return contentApi.list({ unlabeled: true, limit: PAGE_SIZE, cursor: pageParam })
-      if (label === 'watched') return contentApi.list({ watched: true, limit: PAGE_SIZE, cursor: pageParam })
-      return contentApi.list({ limit: PAGE_SIZE, cursor: pageParam })
+      const q = debouncedSearch || undefined
+      if (label === '1') return contentApi.list({ label: 1, limit: PAGE_SIZE, cursor: pageParam, q })
+      if (label === '0') return contentApi.list({ label: 0, limit: PAGE_SIZE, cursor: pageParam, q })
+      if (label === 'unlabeled') return contentApi.list({ unlabeled: true, limit: PAGE_SIZE, cursor: pageParam, q })
+      if (label === 'watched') return contentApi.list({ watched: true, limit: PAGE_SIZE, cursor: pageParam, q })
+      return contentApi.list({ limit: PAGE_SIZE, cursor: pageParam, q })
     },
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     refetchInterval: 15_000,
@@ -78,7 +90,7 @@ export function LibraryPage() {
     )
     observer.observe(node)
     return () => observer.disconnect()
-  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, label, items.length])
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, label, debouncedSearch, items.length])
 
   return (
     <div className="space-y-7">
@@ -86,7 +98,7 @@ export function LibraryPage() {
         <div>
           <div className="eyebrow">全部归档</div>
           <h1 className="page-heading mt-1 text-3xl">内容库</h1>
-          <p className="mt-2 text-sm text-muted">按人工标注筛选，模型分数只显示为辅助信息。</p>
+          <p className="mt-2 text-sm text-muted">按标题搜索或人工标注筛选，模型分数只显示为辅助信息。</p>
         </div>
         <div className="flex flex-wrap gap-1 rounded-xl bg-canvas p-1">
           {[
@@ -110,6 +122,18 @@ export function LibraryPage() {
           ))}
         </div>
       </div>
+
+      <label className="relative block">
+        <span className="sr-only">搜索标题</span>
+        <Search size={16} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-muted" />
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+          placeholder="搜索标题（忽略空格/标点/大小写，多词空格分隔）"
+          className="min-h-11 w-full rounded-xl border border-line bg-panel py-2.5 pr-3.5 pl-10 text-sm text-ink outline-none transition-colors placeholder:text-muted focus:border-teal"
+        />
+      </label>
 
       {remaining > 0 || (total > 0 && scored < total) ? (
         <div className="border-y border-line py-3">
@@ -169,8 +193,14 @@ export function LibraryPage() {
 
       {!query.isLoading && items.length === 0 ? (
         <div className="mx-auto max-w-md py-16 text-center text-muted">
-          <p className="text-lg font-medium text-ink">这里还没有符合条件的内容</p>
-          <p className="mt-2 text-sm">尝试切换筛选条件，或等待爬虫将新内容导入。</p>
+          <p className="text-lg font-medium text-ink">
+            {debouncedSearch ? '没有匹配的标题' : '这里还没有符合条件的内容'}
+          </p>
+          <p className="mt-2 text-sm">
+            {debouncedSearch
+              ? '试试更短的关键词，或去掉部分筛选条件。'
+              : '尝试切换筛选条件，或等待爬虫将新内容导入。'}
+          </p>
         </div>
       ) : null}
 

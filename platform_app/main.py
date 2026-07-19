@@ -5,7 +5,7 @@ import secrets
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from .candidates import import_candidate
 from .config import get_settings
 from .database import configure_engine, get_session
 from .domain.labels import LabelConflictError, apply_label, undo_label
+from .domain.search import parse_search_tokens
 from .models import (
     AuthSession,
     ContentItem,
@@ -69,6 +70,7 @@ from .services import (
     get_idempotent_response,
     make_cursor,
     make_score_cursor,
+    make_time_cursor,
     maybe_queue_training_snapshot,
     parse_cursor,
     parse_score_cursor,
@@ -256,15 +258,20 @@ def list_contents(
     unlabeled: bool = False,
     watched: bool = False,
     status: str | None = None,
+    q: str | None = None,
     limit: int = 24,
     cursor: str | None = None,
     session: Session = Depends(get_session),
     _user: User = Depends(require_user),
 ):
     limit = min(max(limit, 1), 100)
-    # 全部 / 喜欢 / 不喜欢：按模型概率；未标注 / 已看过：按时间
-    sort_by_score = not unlabeled and not watched
+    # 喜欢/不喜欢：最近标注优先；全部：模型分；未标注/已看过：入库时间
+    sort_by_label_time = label in (0, 1) and not unlabeled and not watched
+    sort_by_score = not unlabeled and not watched and not sort_by_label_time
     model_version = active_model_version(session)
+    score_expr = None
+    time_expr = ContentItem.created_at
+
     if sort_by_score:
         latest_prob = (
             select(Prediction.probability)
@@ -276,8 +283,17 @@ def list_contents(
         )
         score_expr = func.coalesce(latest_prob, -1.0)
         query = content_query().order_by(score_expr.desc(), ContentItem.id.desc())
+    elif sort_by_label_time:
+        latest_label_at = (
+            select(func.max(LabelEvent.created_at))
+            .where(LabelEvent.content_id == ContentItem.id)
+            .where(LabelEvent.label == label)
+            .where(LabelEvent.source != 'undo')
+            .scalar_subquery()
+        )
+        time_expr = func.coalesce(latest_label_at, ContentItem.updated_at, ContentItem.created_at)
+        query = content_query().order_by(time_expr.desc(), ContentItem.id.desc())
     else:
-        score_expr = None
         query = content_query().order_by(ContentItem.created_at.desc(), ContentItem.id.desc())
 
     if watched:
@@ -292,6 +308,15 @@ def list_contents(
     if status:
         query = query.where(ContentItem.status == status)
 
+    for token in parse_search_tokens(q):
+        pattern = f'%{token}%'
+        query = query.where(
+            or_(
+                func.normalize_title(ContentItem.title_clean).like(pattern),
+                func.normalize_title(ContentItem.title_raw).like(pattern),
+            )
+        )
+
     if cursor:
         if sort_by_score:
             score, content_id = parse_score_cursor(cursor)
@@ -300,10 +325,10 @@ def list_contents(
                 | ((score_expr == score) & (ContentItem.id < content_id))
             )
         else:
-            created_at, content_id = parse_cursor(cursor)
+            moment, content_id = parse_cursor(cursor)
             query = query.where(
-                (ContentItem.created_at < created_at)
-                | ((ContentItem.created_at == created_at) & (ContentItem.id < content_id))
+                (time_expr < moment)
+                | ((time_expr == moment) & (ContentItem.id < content_id))
             )
 
     rows = list(session.scalars(query.limit(limit + 1)).all())
@@ -317,6 +342,17 @@ def list_contents(
     if has_more and page:
         if sort_by_score:
             next_cursor = make_score_cursor(page[-1].id, items[-1].probability)
+        elif sort_by_label_time:
+            last = page[-1]
+            labeled_at = session.scalar(
+                select(func.max(LabelEvent.created_at)).where(
+                    LabelEvent.content_id == last.id,
+                    LabelEvent.label == label,
+                    LabelEvent.source != 'undo',
+                )
+            )
+            moment = labeled_at or last.updated_at or last.created_at
+            next_cursor = make_time_cursor(moment, last.id)
         else:
             next_cursor = make_cursor(page[-1])
     else:

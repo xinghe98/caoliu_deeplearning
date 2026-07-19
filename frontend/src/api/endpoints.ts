@@ -32,6 +32,7 @@ export const contentApi = {
       unlabeled?: boolean
       watched?: boolean
       status?: string
+      q?: string
       limit?: number
       cursor?: string | null
     } = {},
@@ -41,6 +42,7 @@ export const contentApi = {
     else if (params.unlabeled) query.set('unlabeled', 'true')
     else if (params.label === 0 || params.label === 1) query.set('label', String(params.label))
     if (params.status) query.set('status', params.status)
+    if (params.q?.trim()) query.set('q', params.q.trim())
     if (params.cursor) query.set('cursor', params.cursor)
     query.set('limit', String(params.limit ?? 24))
     return api<ContentPage>(`/api/v1/contents?${query}`)
